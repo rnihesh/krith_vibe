@@ -43,7 +43,7 @@ export function Sidebar({ selectedNode, onClose }: Props) {
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-bg-border">
             <h3 className="font-semibold text-sm text-text-primary truncate pr-2">
-              File Details
+              {isFile(selectedNode) ? "File Details" : "Cluster Details"}
             </h3>
             <button
               onClick={onClose}
@@ -65,15 +65,25 @@ export function Sidebar({ selectedNode, onClose }: Props) {
                   ),
                 }}
               >
-                {getFileIcon(selectedNode.label || "")}
+                {isFile(selectedNode)
+                  ? getFileIcon(selectedNode.file_type || "")
+                  : "C"}
               </div>
               <div className="min-w-0">
                 <div className="font-semibold text-text-primary text-sm break-all">
-                  {selectedNode.label}
+                  {isFile(selectedNode)
+                    ? selectedNode.filename
+                    : selectedNode.label}
                 </div>
                 {isFile(selectedNode) && (
                   <div className="text-xs text-text-tertiary mt-0.5">
-                    ID: {selectedNode.file_id}
+                    {selectedNode.file_type?.toUpperCase()} • ID:{" "}
+                    {selectedNode.file_id}
+                  </div>
+                )}
+                {!isFile(selectedNode) && (
+                  <div className="text-xs text-text-tertiary mt-0.5">
+                    Cluster • {(selectedNode as any).file_count} files
                   </div>
                 )}
               </div>
@@ -96,7 +106,19 @@ export function Sidebar({ selectedNode, onClose }: Props) {
               </div>
             )}
 
-            {/* Summary */}
+            {/* Cluster Description (for cluster nodes) */}
+            {!isFile(selectedNode) && (selectedNode as any).description && (
+              <div>
+                <div className="text-xs text-text-tertiary font-semibold uppercase tracking-wider mb-1.5">
+                  Description
+                </div>
+                <div className="text-sm text-text-secondary leading-relaxed">
+                  {(selectedNode as any).description}
+                </div>
+              </div>
+            )}
+
+            {/* Summary (for file nodes) */}
             {isFile(selectedNode) && selectedNode.summary && (
               <div>
                 <div className="text-xs text-text-tertiary font-semibold uppercase tracking-wider mb-1.5">

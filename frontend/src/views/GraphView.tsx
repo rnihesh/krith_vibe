@@ -1,6 +1,7 @@
 import { useRef, useEffect, useCallback, useState, useMemo } from "react";
 import ForceGraph2D, { ForceGraphMethods } from "react-force-graph-2d";
 import * as d3Force from "d3-force";
+import { ZoomIn, ZoomOut, Maximize2, Crosshair } from "lucide-react";
 import { GraphData, GraphNode, getClusterColor } from "../types";
 
 interface Props {
@@ -66,6 +67,7 @@ export function GraphView({ data, onNodeClick, searchQuery }: Props) {
         type: "cluster" as const,
         label: c.name,
         clusterId: c.id,
+        cluster_id: c.id,
         val: 20 + c.file_count * 5,
         file_count: c.file_count,
         description: c.description,
@@ -75,11 +77,17 @@ export function GraphView({ data, onNodeClick, searchQuery }: Props) {
         type: "file" as const,
         label: f.label,
         clusterId: f.cluster_id,
+        cluster_id: f.cluster_id,
         val: 6,
         file_id: f.file_id,
         filename: f.filename,
         summary: f.summary,
         current_path: f.current_path,
+        file_type: f.file_type,
+        size_bytes: f.size_bytes,
+        word_count: f.word_count,
+        page_count: f.page_count,
+        key_topics: f.key_topics,
       })),
     ];
 
@@ -120,28 +128,35 @@ export function GraphView({ data, onNodeClick, searchQuery }: Props) {
   useEffect(() => {
     if (!graphRef.current) return;
     const fg = graphRef.current;
-    // Stronger repulsion between all nodes
+
+    // Strong center force to keep everything anchored in the middle
+    fg.d3Force("center", d3Force.forceCenter(0, 0).strength(0.1));
+
+    // Moderate repulsion - not too strong, not too weak
     fg.d3Force(
       "charge",
-      d3Force.forceManyBody().strength(-200).distanceMax(400),
+      d3Force.forceManyBody().strength(-120).distanceMax(250),
     );
-    // Longer link distance so files spread out from cluster center
+
+    // Link force - keeps files connected to clusters
     fg.d3Force(
       "link",
       d3Force
         .forceLink()
         .id((d: any) => d.id)
-        .distance(80)
-        .strength(0.6),
+        .distance(60)
+        .strength(0.7),
     );
-    // Keep clusters away from each other
+
+    // Collision - prevent overlap
     fg.d3Force(
       "collide",
       d3Force
         .forceCollide()
-        .radius((d: any) => (d.type === "cluster" ? 40 : 15))
-        .strength(0.8),
+        .radius((d: any) => (d.type === "cluster" ? 35 : 12))
+        .strength(0.7),
     );
+
     fg.d3ReheatSimulation();
   }, [graphData]);
 
@@ -287,40 +302,112 @@ export function GraphView({ data, onNodeClick, searchQuery }: Props) {
     return isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)";
   }, [isDark]);
 
+  // Zoom controls
+  const handleZoomIn = useCallback(() => {
+    if (graphRef.current) {
+      const currentZoom = graphRef.current.zoom();
+      graphRef.current.zoom(currentZoom * 1.4, 300);
+    }
+  }, []);
+
+  const handleZoomOut = useCallback(() => {
+    if (graphRef.current) {
+      const currentZoom = graphRef.current.zoom();
+      graphRef.current.zoom(currentZoom / 1.4, 300);
+    }
+  }, []);
+
+  const handleZoomFit = useCallback(() => {
+    if (graphRef.current) {
+      graphRef.current.zoomToFit(400, 60);
+    }
+  }, []);
+
+  const handleCenterOnClusters = useCallback(() => {
+    if (graphRef.current) {
+      // Center view without changing zoom
+      graphRef.current.centerAt(0, 0, 400);
+    }
+  }, []);
+
   return (
-    <div ref={containerRef} className="w-full h-full bg-bg-main">
+    <div ref={containerRef} className="w-full h-full bg-bg-main relative">
       {graphData.nodes.length > 0 && (
-        <ForceGraph2D
-          ref={graphRef}
-          width={dimensions.width}
-          height={dimensions.height}
-          graphData={graphData}
-          nodeCanvasObject={nodeCanvasObject}
-          nodePointerAreaPaint={(node: any, color, ctx) => {
-            const r =
-              node.type === "cluster" ? Math.sqrt(node.val || 20) * 1.8 : 5;
-            ctx.beginPath();
-            ctx.arc(node.x ?? 0, node.y ?? 0, r + 5, 0, Math.PI * 2);
-            ctx.fillStyle = color;
-            ctx.fill();
-          }}
-          linkColor={linkColor}
-          linkWidth={0.8}
-          linkDirectionalParticles={0}
-          onNodeClick={(node: any) => {
-            onNodeClick(node as GraphNode);
-          }}
-          onNodeDragEnd={handleNodeDragEnd}
-          onEngineStop={handleEngineStop}
-          d3AlphaDecay={0.008}
-          d3VelocityDecay={0.25}
-          cooldownTime={Infinity}
-          warmupTicks={50}
-          enableZoomInteraction={true}
-          enablePanInteraction={true}
-          enableNodeDrag={true}
-          backgroundColor="rgba(0,0,0,0)"
-        />
+        <>
+          <ForceGraph2D
+            ref={graphRef}
+            width={dimensions.width}
+            height={dimensions.height}
+            graphData={graphData}
+            nodeCanvasObject={nodeCanvasObject}
+            nodePointerAreaPaint={(node: any, color, ctx) => {
+              const r =
+                node.type === "cluster" ? Math.sqrt(node.val || 20) * 1.8 : 5;
+              ctx.beginPath();
+              ctx.arc(node.x ?? 0, node.y ?? 0, r + 5, 0, Math.PI * 2);
+              ctx.fillStyle = color;
+              ctx.fill();
+            }}
+            linkColor={linkColor}
+            linkWidth={0.8}
+            linkDirectionalParticles={0}
+            onNodeClick={(node: any) => {
+              onNodeClick(node as GraphNode);
+            }}
+            onNodeDragEnd={handleNodeDragEnd}
+            onEngineStop={handleEngineStop}
+            d3AlphaDecay={0.02}
+            d3VelocityDecay={0.4}
+            cooldownTime={4000}
+            warmupTicks={100}
+            enableZoomInteraction={true}
+            enablePanInteraction={true}
+            enableNodeDrag={true}
+            backgroundColor="rgba(0,0,0,0)"
+          />
+
+          {/* Zoom Controls */}
+          <div
+            className="absolute top-4 right-4 flex flex-col gap-1 p-1.5 rounded-xl shadow-lg"
+            style={{
+              background: "var(--bg-card)",
+              border: "1px solid var(--bg-border)",
+            }}
+          >
+            <button
+              onClick={handleZoomIn}
+              className="w-9 h-9 flex items-center justify-center rounded-lg text-text-secondary hover:text-text-primary hover:bg-bg-dark cursor-pointer border-none bg-transparent transition-colors"
+              title="Zoom in"
+            >
+              <ZoomIn size={18} />
+            </button>
+            <button
+              onClick={handleZoomOut}
+              className="w-9 h-9 flex items-center justify-center rounded-lg text-text-secondary hover:text-text-primary hover:bg-bg-dark cursor-pointer border-none bg-transparent transition-colors"
+              title="Zoom out"
+            >
+              <ZoomOut size={18} />
+            </button>
+            <div
+              className="h-px mx-2 my-0.5"
+              style={{ background: "var(--bg-border)" }}
+            />
+            <button
+              onClick={handleZoomFit}
+              className="w-9 h-9 flex items-center justify-center rounded-lg text-text-secondary hover:text-text-primary hover:bg-bg-dark cursor-pointer border-none bg-transparent transition-colors"
+              title="Fit to screen"
+            >
+              <Maximize2 size={18} />
+            </button>
+            <button
+              onClick={handleCenterOnClusters}
+              className="w-9 h-9 flex items-center justify-center rounded-lg text-text-secondary hover:text-text-primary hover:bg-bg-dark cursor-pointer border-none bg-transparent transition-colors"
+              title="Center view"
+            >
+              <Crosshair size={18} />
+            </button>
+          </div>
+        </>
       )}
       {(!data || graphData.nodes.length === 0) && (
         <div className="absolute inset-0 flex items-center justify-center text-text-tertiary text-sm">
