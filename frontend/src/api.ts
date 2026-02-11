@@ -1,5 +1,5 @@
 /* ─── API client for SEFS backend ─── */
-import { GraphData, StatusInfo, EventLog } from "../types";
+import { GraphData, StatusInfo, EventLog } from "./types";
 
 const API_BASE = `http://${window.location.hostname}:8484`;
 
@@ -14,7 +14,17 @@ export async function getStatus(): Promise<StatusInfo> {
 }
 
 export async function getGraphData(): Promise<GraphData> {
-  return fetchJSON("/api/graph");
+  const raw = await fetchJSON<any>("/api/graph");
+  const nodes = raw.nodes || [];
+  const files = nodes
+    .filter((n: any) => n.type === "file")
+    .map((n: any) => ({ ...n, filename: n.label || n.filename || "" }));
+  return {
+    nodes,
+    links: raw.links || [],
+    clusters: raw.clusters || [],
+    files,
+  };
 }
 
 export async function getEvents(limit = 50): Promise<EventLog[]> {
@@ -23,5 +33,11 @@ export async function getEvents(limit = 50): Promise<EventLog[]> {
 
 export async function rescan(): Promise<{ message: string }> {
   const res = await fetch(`${API_BASE}/api/rescan`, { method: "POST" });
+  return res.json();
+}
+
+export async function openFile(fileId: number): Promise<{ message: string }> {
+  const res = await fetch(`${API_BASE}/api/open/${fileId}`, { method: "POST" });
+  if (!res.ok) throw new Error(`Failed to open file: ${res.statusText}`);
   return res.json();
 }

@@ -12,14 +12,14 @@
     "electron:build": "vite build && electron-builder"
   },
   "dependencies": {
-    "@emotion/react": "^11.14.0",
-    "@emotion/styled": "^11.14.1",
+    "@tailwindcss/vite": "^4.1.18",
     "d3": "^7.9.0",
     "framer-motion": "^12.34.0",
     "lucide-react": "^0.563.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
-    "react-force-graph-2d": "^1.29.1"
+    "react-force-graph-2d": "^1.29.1",
+    "tailwindcss": "^4.1.18"
   },
   "main": "electron/main.cjs",
   "build": {

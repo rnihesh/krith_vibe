@@ -4,6 +4,7 @@ export interface SEFSFile {
   id: string;
   file_id: number;
   label: string;
+  filename: string;
   cluster_id: number;
   x: number;
   y: number;
@@ -13,6 +14,7 @@ export interface SEFSFile {
   page_count: number;
   summary: string;
   current_path: string;
+  key_topics?: string[];
   type: "file";
 }
 
@@ -39,6 +41,7 @@ export interface GraphData {
   nodes: GraphNode[];
   links: GraphLink[];
   clusters: ClusterInfo[];
+  files: SEFSFile[];
 }
 
 export interface ClusterInfo {
@@ -52,12 +55,14 @@ export interface ClusterInfo {
 
 export interface WSEvent {
   type: string;
+  timestamp?: string;
   file_id?: number;
   filename?: string;
   cluster_count?: number;
   root?: string;
   file_count?: number;
   detail?: string;
+  data?: Record<string, any>;
 }
 
 export interface EventLog {
@@ -77,23 +82,18 @@ export interface StatusInfo {
 
 export type ViewMode = "graph" | "spatial";
 
-// Cluster color palette
+// Cluster color palette -- warm, professional tones
 export const CLUSTER_COLORS = [
-  "#6366f1", // indigo
-  "#06b6d4", // cyan
-  "#a855f7", // purple
-  "#ec4899", // pink
-  "#10b981", // emerald
-  "#f59e0b", // amber
-  "#ef4444", // red
-  "#3b82f6", // blue
-  "#8b5cf6", // violet
-  "#14b8a6", // teal
-  "#f97316", // orange
-  "#84cc16", // lime
-  "#e879f9", // fuchsia
-  "#22d3ee", // cyan bright
-  "#facc15", // yellow
+  "#d97757", // terracotta (accent)
+  "#2563eb", // blue
+  "#16a34a", // green
+  "#9333ea", // purple
+  "#d97706", // amber
+  "#dc2626", // red
+  "#0891b2", // cyan
+  "#4f46e5", // indigo
+  "#c026d3", // fuchsia
+  "#059669", // emerald
 ];
 
 export function getClusterColor(clusterId: number): string {
@@ -103,19 +103,19 @@ export function getClusterColor(clusterId: number): string {
 export function getFileIcon(fileType: string): string {
   switch (fileType) {
     case "pdf":
-      return "📄";
+      return "PDF";
     case "txt":
     case "text":
-      return "📝";
+      return "TXT";
     case "md":
     case "markdown":
-      return "📋";
+      return "MD";
     case "docx":
-      return "📃";
+      return "DOC";
     case "csv":
-      return "📊";
+      return "CSV";
     default:
-      return "📎";
+      return "FILE";
   }
 }
 

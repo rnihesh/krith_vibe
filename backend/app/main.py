@@ -6,6 +6,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import subprocess
+import sys
 from pathlib import Path
 from contextlib import asynccontextmanager
 
@@ -161,6 +163,27 @@ async def get_events(limit: int = 50):
 async def rescan():
     count = await pipeline.full_scan()
     return {"message": f"Scan complete: {count} files processed"}
+
+
+@app.post("/api/open/{file_id}")
+async def open_file(file_id: int):
+    """Open a file using the OS default application."""
+    f = await db.get_file_by_id(file_id)
+    if not f:
+        raise HTTPException(404, "File not found")
+    path = Path(f.current_path)
+    if not path.exists():
+        raise HTTPException(404, f"File not found on disk: {path}")
+    try:
+        if sys.platform == "darwin":
+            subprocess.Popen(["open", str(path)])
+        elif sys.platform == "win32":
+            subprocess.Popen(["start", str(path)], shell=True)
+        else:
+            subprocess.Popen(["xdg-open", str(path)])
+        return {"message": f"Opened {f.filename}"}
+    except Exception as e:
+        raise HTTPException(500, f"Failed to open file: {e}")
 
 
 @app.get("/api/graph")

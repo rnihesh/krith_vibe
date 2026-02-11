@@ -1,125 +1,114 @@
-/* ─── Live Event Feed (bottom bar) ─── */
-import { useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { WSEvent } from "../types";
 import {
-  FilePlus,
-  FileEdit,
-  FileX,
+  FileText,
+  FolderPlus,
   RefreshCw,
-  Search,
+  Trash2,
   CheckCircle,
-  Loader,
+  AlertTriangle,
+  Info,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
+import { WSEvent } from "../types";
+import { useState } from "react";
 
 interface Props {
   events: WSEvent[];
 }
 
-const EVENT_ICONS: Record<string, React.ReactNode> = {
-  file_added: <FilePlus size={11} color="var(--accent-green)" />,
-  file_modified: <FileEdit size={11} color="var(--accent-amber)" />,
-  file_removed: <FileX size={11} color="var(--accent-red)" />,
-  reclustering_start: <RefreshCw size={11} color="var(--accent-blue)" />,
-  reclustering_end: <CheckCircle size={11} color="var(--accent-green)" />,
-  scan_start: <Search size={11} color="var(--accent-cyan)" />,
-  scan_complete: <CheckCircle size={11} color="var(--accent-green)" />,
-  processing_start: <Loader size={11} color="var(--accent-purple)" />,
+const eventIcons: Record<string, React.ReactNode> = {
+  file_added: <FolderPlus size={12} className="text-success" />,
+  file_modified: <RefreshCw size={12} className="text-accent" />,
+  file_removed: <Trash2 size={12} className="text-error" />,
+  scan_complete: <CheckCircle size={12} className="text-success" />,
+  reclustering_start: <RefreshCw size={12} className="text-warning" />,
+  reclustering_end: <CheckCircle size={12} className="text-success" />,
+  error: <AlertTriangle size={12} className="text-error" />,
 };
 
-const EVENT_LABELS: Record<string, (e: WSEvent) => string> = {
-  file_added: (e) => `Added: ${e.filename}`,
-  file_modified: (e) => `Modified: ${e.filename}`,
-  file_removed: (e) => `Removed: ${e.filename}`,
-  reclustering_start: () => "Reclustering files...",
-  reclustering_end: (e) => `Reclustered into ${e.cluster_count} groups`,
-  scan_start: () => "Scanning root folder...",
-  scan_complete: (e) => `Scan complete: ${e.file_count} files`,
-  processing_start: (e) => `Processing: ${e.filename}`,
-};
+function formatTime(ts: string): string {
+  try {
+    const d = new Date(ts);
+    return d.toLocaleTimeString(undefined, {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+  } catch {
+    return "";
+  }
+}
+
+function eventMessage(event: WSEvent): string {
+  switch (event.type) {
+    case "file_added":
+      return `Added: ${event.data?.filename || "file"}`;
+    case "file_modified":
+      return `Modified: ${event.data?.filename || "file"}`;
+    case "file_removed":
+      return `Removed: ${event.data?.filename || "file"}`;
+    case "scan_complete":
+      return `Scan complete (${event.data?.total_files || 0} files)`;
+    case "reclustering_start":
+      return "Reclustering started...";
+    case "reclustering_end":
+      return `Reclustered into ${event.data?.cluster_count || 0} groups`;
+    case "error":
+      return `Error: ${event.data?.message || "unknown"}`;
+    default:
+      return event.type;
+  }
+}
 
 export function EventFeed({ events }: Props) {
-  const scrollRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollLeft = 0;
-    }
-  }, [events]);
+  const [expanded, setExpanded] = useState(false);
+  const displayEvents = expanded ? events.slice(0, 20) : events.slice(0, 3);
 
   if (events.length === 0) return null;
 
   return (
-    <div
-      style={{
-        borderTop: "1px solid var(--border-color)",
-        background: "var(--bg-secondary)",
-        padding: "6px 16px",
-        display: "flex",
-        alignItems: "center",
-        gap: 8,
-        minHeight: 32,
-        overflow: "hidden",
-      }}
-    >
-      <span
-        style={{
-          fontSize: 9,
-          fontWeight: 700,
-          color: "var(--text-muted)",
-          textTransform: "uppercase",
-          letterSpacing: 1,
-          flexShrink: 0,
-        }}
+    <div className="border-t border-bg-border bg-bg-card">
+      {/* Toggle header */}
+      <button
+        onClick={() => setExpanded((e) => !e)}
+        className="w-full flex items-center justify-between px-4 py-1.5 text-xs text-text-tertiary hover:text-text-secondary cursor-pointer bg-transparent border-none font-sans"
       >
-        Live
-      </span>
-      <div
-        style={{
-          width: 4,
-          height: 4,
-          borderRadius: "50%",
-          background: "var(--accent-green)",
-          animation: "pulseGlow 2s ease-in-out infinite",
-          flexShrink: 0,
-        }}
-      />
-      <div
-        ref={scrollRef}
-        style={{
-          display: "flex",
-          gap: 10,
-          overflow: "hidden",
-          flex: 1,
-        }}
-      >
-        <AnimatePresence>
-          {events.slice(0, 10).map((event, i) => (
-            <motion.div
-              key={`${event.type}-${i}-${event.filename ?? ""}`}
-              initial={{ opacity: 0, x: -20, scale: 0.9 }}
-              animate={{ opacity: 1, x: 0, scale: 1 }}
-              exit={{ opacity: 0, x: 20 }}
-              transition={{ duration: 0.2 }}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 5,
-                fontSize: 11,
-                color: "var(--text-secondary)",
-                whiteSpace: "nowrap",
-                flexShrink: 0,
-                padding: "2px 8px",
-                background: "var(--bg-tertiary)",
-                borderRadius: 4,
-              }}
-            >
-              {EVENT_ICONS[event.type] ?? null}
-              {(EVENT_LABELS[event.type] ?? (() => event.type))(event)}
-            </motion.div>
-          ))}
-        </AnimatePresence>
-      </div>
+        <span className="flex items-center gap-1.5">
+          <div className="w-1.5 h-1.5 rounded-full bg-success" />
+          Activity ({events.length})
+        </span>
+        {expanded ? <ChevronDown size={12} /> : <ChevronUp size={12} />}
+      </button>
+
+      <AnimatePresence>
+        {displayEvents.length > 0 && (
+          <motion.div
+            initial={false}
+            animate={{ height: "auto" }}
+            className="px-4 pb-2 flex flex-wrap gap-1.5 overflow-hidden"
+          >
+            {displayEvents.map((event, i) => (
+              <motion.div
+                key={`${event.type}-${event.timestamp}-${i}`}
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="flex items-center gap-1.5 px-2 py-1 bg-bg-dark rounded-md text-xs text-text-secondary"
+              >
+                {eventIcons[event.type] || (
+                  <Info size={12} className="text-info" />
+                )}
+                <span>{eventMessage(event)}</span>
+                {event.timestamp && (
+                  <span className="text-text-tertiary ml-1">
+                    {formatTime(event.timestamp)}
+                  </span>
+                )}
+              </motion.div>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

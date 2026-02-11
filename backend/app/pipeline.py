@@ -159,6 +159,12 @@ async def run_clustering():
         name = await namer.generate_cluster_name(
             cluster_texts, list(cluster_names.values())
         )
+        # Ensure unique name across this run
+        base_name = name
+        counter = 2
+        while name in cluster_names.values():
+            name = f"{base_name}_{counter}"
+            counter += 1
         cluster_names[int(cid)] = name
 
         centroid = centroids.get(int(cid))

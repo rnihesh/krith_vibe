@@ -1,6 +1,6 @@
-/* ─── SEFS Main Application ─── */
+/* SEFS Main Application -- Claude.ai inspired UI */
 import { useState, useEffect, useCallback, useRef } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import {
   Network,
   Map,
@@ -9,14 +9,14 @@ import {
   WifiOff,
   Search,
   FolderOpen,
-  Zap,
   FileText,
   Activity,
+  Sun,
+  Moon,
 } from "lucide-react";
 import {
   GraphData,
   GraphNode,
-  SEFSFile,
   WSEvent,
   ViewMode,
   EventLog,
@@ -24,6 +24,7 @@ import {
 } from "./types";
 import { getGraphData, getStatus, getEvents, rescan } from "./api";
 import { useWebSocket } from "./hooks/useWebSocket";
+import { useTheme } from "./hooks/useTheme";
 import { GraphView } from "./views/GraphView";
 import { SpatialView } from "./views/SpatialView";
 import { Sidebar } from "./components/Sidebar";
@@ -43,8 +44,8 @@ export default function App() {
   const [isReclustering, setIsReclustering] = useState(false);
   const [liveEvents, setLiveEvents] = useState<WSEvent[]>([]);
   const refreshTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const { isDark, toggleTheme } = useTheme();
 
-  // Fetch data
   const fetchData = useCallback(async () => {
     try {
       const [graph, st, ev] = await Promise.all([
@@ -60,11 +61,9 @@ export default function App() {
     }
   }, []);
 
-  // WebSocket events
   const handleWSEvent = useCallback(
     (event: WSEvent) => {
       setLiveEvents((prev) => [event, ...prev.slice(0, 49)]);
-
       switch (event.type) {
         case "reclustering_start":
           setIsReclustering(true);
@@ -72,7 +71,6 @@ export default function App() {
         case "reclustering_end":
         case "scan_complete":
           setIsReclustering(false);
-          // Debounce refresh
           clearTimeout(refreshTimer.current);
           refreshTimer.current = setTimeout(fetchData, 500);
           break;
@@ -87,7 +85,7 @@ export default function App() {
     [fetchData],
   );
 
-  const { connected, send } = useWebSocket(handleWSEvent);
+  const { connected } = useWebSocket(handleWSEvent);
 
   useEffect(() => {
     fetchData();
@@ -100,220 +98,135 @@ export default function App() {
     await rescan();
   };
 
-  const filteredNodes = graphData?.nodes.filter(
-    (n) =>
-      !searchQuery || n.label.toLowerCase().includes(searchQuery.toLowerCase()),
-  );
-
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        height: "100vh",
-        background: "var(--bg-primary)",
-      }}
-    >
-      {/* ─── Top Bar ─── */}
+    <div className="flex flex-col h-screen bg-bg-main text-text-primary">
+      {/* Top Bar */}
       <header
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 12,
-          padding: "10px 16px",
-          borderBottom: "1px solid var(--border-color)",
-          background: "var(--bg-secondary)",
-          zIndex: 100,
-        }}
+        className="flex items-center justify-between px-5 pr-6 py-0 border-b border-bg-border bg-bg-card"
+        style={{ height: 56 }}
       >
-        {/* Logo */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            marginRight: 8,
-          }}
-        >
-          <Zap size={22} color="var(--accent-blue)" />
-          <span
-            style={{
-              fontWeight: 700,
-              fontSize: 18,
-              background:
-                "linear-gradient(135deg, var(--accent-blue), var(--accent-purple))",
-              WebkitBackgroundClip: "text",
-              WebkitTextFillColor: "transparent",
-              letterSpacing: "-0.5px",
-            }}
+        {/* Left section */}
+        <div className="flex items-center gap-4 shrink-0">
+          {/* Logo */}
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-accent flex items-center justify-center shadow-sm">
+              <Network size={16} className="text-white" />
+            </div>
+            <span className="font-semibold text-[15px] tracking-tight text-text-primary">
+              SEFS
+            </span>
+          </div>
+
+          {/* View Toggle */}
+          <div
+            className="flex rounded-lg"
+            style={{ border: "1px solid var(--bg-border)" }}
           >
-            SEFS
-          </span>
+            <ViewToggle
+              active={viewMode === "graph"}
+              onClick={() => setViewMode("graph")}
+              icon={<Network size={14} />}
+              label="Graph"
+            />
+            <ViewToggle
+              active={viewMode === "spatial"}
+              onClick={() => setViewMode("spatial")}
+              icon={<Map size={14} />}
+              label="Spatial"
+            />
+          </div>
         </div>
 
-        {/* View Toggle */}
-        <div
-          style={{
-            display: "flex",
-            background: "var(--bg-tertiary)",
-            borderRadius: 8,
-            padding: 3,
-            gap: 2,
-          }}
-        >
-          <ViewToggle
-            active={viewMode === "graph"}
-            onClick={() => setViewMode("graph")}
-            icon={<Network size={15} />}
-            label="Graph"
-          />
-          <ViewToggle
-            active={viewMode === "spatial"}
-            onClick={() => setViewMode("spatial")}
-            icon={<Map size={15} />}
-            label="Spatial"
-          />
+        {/* Center: Search */}
+        <div className="flex-1 flex justify-center px-6">
+          <div className="relative w-full max-w-xs">
+            <Search
+              size={14}
+              className="absolute left-3 top-1/2 -translate-y-1/2 text-text-tertiary pointer-events-none"
+            />
+            <input
+              type="text"
+              placeholder="Search files..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full h-9 pl-9 pr-3 rounded-lg text-sm font-sans text-text-primary placeholder:text-text-tertiary focus:outline-none"
+              style={{
+                background: "var(--bg-dark)",
+                border: "1px solid var(--bg-border)",
+              }}
+            />
+          </div>
         </div>
 
-        {/* Search */}
-        <div
-          style={{
-            flex: 1,
-            maxWidth: 400,
-            position: "relative",
-          }}
-        >
-          <Search
-            size={14}
-            style={{
-              position: "absolute",
-              left: 10,
-              top: "50%",
-              transform: "translateY(-50%)",
-              color: "var(--text-muted)",
-            }}
-          />
-          <input
-            type="text"
-            placeholder="Search files..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            style={{
-              width: "100%",
-              padding: "7px 12px 7px 32px",
-              background: "var(--bg-tertiary)",
-              border: "1px solid var(--border-color)",
-              borderRadius: 8,
-              color: "var(--text-primary)",
-              fontSize: 13,
-              fontFamily: "var(--font-sans)",
-              outline: "none",
-              transition: "border-color 0.2s",
-            }}
-            onFocus={(e) => (e.target.style.borderColor = "var(--accent-blue)")}
-            onBlur={(e) => (e.target.style.borderColor = "var(--border-color)")}
-          />
-        </div>
+        {/* Right section */}
+        <div className="flex items-center gap-3 shrink-0">
+          {/* Stats */}
+          <div className="flex items-center gap-4 text-[13px] text-text-secondary">
+            <span className="flex items-center gap-1.5">
+              <FileText size={14} className="text-text-tertiary" />
+              <span>{status.file_count} files</span>
+            </span>
+            <span className="flex items-center gap-1.5">
+              <FolderOpen size={14} className="text-text-tertiary" />
+              <span>{status.cluster_count} clusters</span>
+            </span>
+          </div>
 
-        <div style={{ flex: 1 }} />
+          {/* Rescan */}
+          <button
+            onClick={handleRescan}
+            disabled={isReclustering}
+            className={`flex items-center gap-2 h-9 px-4 rounded-lg text-[13px] font-medium cursor-pointer border-none whitespace-nowrap ${
+              isReclustering
+                ? "bg-bg-dark text-text-tertiary cursor-wait"
+                : "bg-accent hover:bg-accent-hover text-white shadow-sm"
+            }`}
+          >
+            <RotateCw
+              size={14}
+              className={isReclustering ? "animate-spin-slow" : ""}
+            />
+            {isReclustering ? "Processing..." : "Rescan"}
+          </button>
 
-        {/* Stats */}
-        <div
-          style={{
-            display: "flex",
-            gap: 16,
-            fontSize: 12,
-            color: "var(--text-secondary)",
-          }}
-        >
-          <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-            <FileText size={13} /> {status.file_count} files
-          </span>
-          <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-            <FolderOpen size={13} /> {status.cluster_count} clusters
-          </span>
-        </div>
+          {/* Theme toggle */}
+          <button
+            onClick={toggleTheme}
+            className="w-9 h-9 flex items-center justify-center rounded-lg text-text-secondary cursor-pointer border-none"
+            style={{ background: "var(--bg-dark)" }}
+            title={isDark ? "Switch to light mode" : "Switch to dark mode"}
+          >
+            {isDark ? <Sun size={16} /> : <Moon size={16} />}
+          </button>
 
-        {/* Actions */}
-        <motion.button
-          whileHover={{ scale: 1.05 }}
-          whileTap={{ scale: 0.95 }}
-          onClick={handleRescan}
-          disabled={isReclustering}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            padding: "6px 12px",
-            background: isReclustering
-              ? "var(--bg-tertiary)"
-              : "linear-gradient(135deg, var(--accent-blue), var(--accent-purple))",
-            border: "none",
-            borderRadius: 8,
-            color: "#fff",
-            fontSize: 12,
-            fontWeight: 500,
-            cursor: isReclustering ? "wait" : "pointer",
-            fontFamily: "var(--font-sans)",
-          }}
-        >
-          <RotateCw
-            size={13}
-            className={isReclustering ? "spin" : ""}
-            style={{
-              animation: isReclustering ? "spin 1s linear infinite" : "none",
-            }}
-          />
-          {isReclustering ? "Processing..." : "Rescan"}
-        </motion.button>
-
-        {/* Connection status */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 4,
-            fontSize: 11,
-            color: connected ? "var(--accent-green)" : "var(--accent-red)",
-          }}
-        >
-          {connected ? <Wifi size={13} /> : <WifiOff size={13} />}
-          {connected ? "Live" : "Offline"}
+          {/* Connection status */}
+          <div
+            className={`flex items-center gap-1.5 text-[13px] ${
+              connected ? "text-success" : "text-error"
+            }`}
+          >
+            <div
+              className={`w-2 h-2 rounded-full ${
+                connected ? "bg-success" : "bg-error"
+              }`}
+            />
+            {connected ? "Live" : "Offline"}
+          </div>
         </div>
       </header>
 
-      {/* ─── Main Content ─── */}
-      <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+      {/* Main Content */}
+      <div className="flex flex-1 overflow-hidden">
         {/* Visualization */}
-        <div style={{ flex: 1, position: "relative" }}>
+        <div className="flex-1 relative">
           {isReclustering && (
             <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              style={{
-                position: "absolute",
-                top: 16,
-                left: "50%",
-                transform: "translateX(-50%)",
-                padding: "8px 20px",
-                background: "rgba(99, 102, 241, 0.15)",
-                border: "1px solid rgba(99, 102, 241, 0.3)",
-                borderRadius: 20,
-                color: "var(--accent-blue)",
-                fontSize: 13,
-                fontWeight: 500,
-                zIndex: 50,
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                backdropFilter: "blur(8px)",
-              }}
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="absolute top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-2 bg-bg-card border border-bg-border rounded-lg shadow-md text-sm text-text-secondary"
             >
-              <Activity
-                size={14}
-                style={{ animation: "spin 2s linear infinite" }}
-              />
+              <Activity size={14} className="animate-spin-slow text-accent" />
               Reclustering files...
             </motion.div>
           )}
@@ -325,7 +238,7 @@ export default function App() {
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                style={{ width: "100%", height: "100%" }}
+                className="w-full h-full"
               >
                 <GraphView
                   data={graphData}
@@ -339,7 +252,7 @@ export default function App() {
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                style={{ width: "100%", height: "100%" }}
+                className="w-full h-full"
               >
                 <SpatialView
                   data={graphData}
@@ -352,54 +265,19 @@ export default function App() {
 
           {/* Cluster legend */}
           {graphData && graphData.clusters.length > 0 && (
-            <div
-              style={{
-                position: "absolute",
-                bottom: 50,
-                left: 16,
-                display: "flex",
-                flexDirection: "column",
-                gap: 4,
-                padding: "10px 14px",
-                background: "var(--bg-glass)",
-                backdropFilter: "blur(12px)",
-                borderRadius: 10,
-                border: "1px solid var(--border-color)",
-                fontSize: 11,
-                maxHeight: 200,
-                overflowY: "auto",
-              }}
-            >
-              <span
-                style={{
-                  fontSize: 10,
-                  color: "var(--text-muted)",
-                  fontWeight: 600,
-                  textTransform: "uppercase",
-                  letterSpacing: 1,
-                }}
-              >
+            <div className="absolute bottom-14 left-4 flex flex-col gap-1 p-3 bg-bg-card border border-bg-border rounded-lg shadow-md text-xs max-h-48 overflow-y-auto">
+              <span className="text-[10px] text-text-tertiary font-semibold uppercase tracking-wider mb-1">
                 Clusters
               </span>
               {graphData.clusters.map((c) => (
-                <div
-                  key={c.id}
-                  style={{ display: "flex", alignItems: "center", gap: 6 }}
-                >
+                <div key={c.id} className="flex items-center gap-2">
                   <div
-                    style={{
-                      width: 8,
-                      height: 8,
-                      borderRadius: "50%",
-                      background: getClusterColor(c.id),
-                      boxShadow: `0 0 6px ${getClusterColor(c.id)}50`,
-                    }}
+                    className="w-2.5 h-2.5 rounded-full shrink-0"
+                    style={{ background: getClusterColor(c.id) }}
                   />
-                  <span style={{ color: "var(--text-secondary)" }}>
+                  <span className="text-text-secondary">
                     {c.name}{" "}
-                    <span style={{ color: "var(--text-muted)" }}>
-                      ({c.file_count})
-                    </span>
+                    <span className="text-text-tertiary">({c.file_count})</span>
                   </span>
                 </div>
               ))}
@@ -414,15 +292,8 @@ export default function App() {
         />
       </div>
 
-      {/* ─── Bottom Event Feed ─── */}
+      {/* Bottom Event Feed */}
       <EventFeed events={liveEvents} />
-
-      <style>{`
-        @keyframes spin {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-      `}</style>
     </div>
   );
 }
@@ -441,23 +312,11 @@ function ViewToggle({
   return (
     <button
       onClick={onClick}
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 5,
-        padding: "5px 12px",
-        background: active
-          ? "linear-gradient(135deg, var(--accent-blue), var(--accent-purple))"
-          : "transparent",
-        border: "none",
-        borderRadius: 6,
-        color: active ? "#fff" : "var(--text-secondary)",
-        fontSize: 12,
-        fontWeight: 500,
-        cursor: "pointer",
-        transition: "all 0.2s",
-        fontFamily: "var(--font-sans)",
-      }}
+      className={`flex items-center gap-1.5 px-4 py-2 text-[13px] font-medium cursor-pointer border-none whitespace-nowrap first:rounded-l-md last:rounded-r-md ${
+        active
+          ? "bg-accent text-white"
+          : "bg-transparent text-text-secondary hover:text-text-primary hover:bg-bg-dark"
+      }`}
     >
       {icon} {label}
     </button>
