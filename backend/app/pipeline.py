@@ -260,9 +260,12 @@ async def run_clustering():
     # Sync to OS
     moves = await sync.sync_files_to_folders(file_cluster_map, cluster_names)
 
-    # Update current paths after moves
+    # Update current paths and filenames after moves
     for move in moves:
         await db.update_file_current_path(move["file_id"], move["to"])
+        # Update filename to match actual on-disk name (handles collision renames like 1_1.txt)
+        new_filename = Path(move["to"]).name
+        await db.update_file_filename(move["file_id"], new_filename)
 
     await broadcast({"type": "reclustering_end", "cluster_count": len(cluster_names)})
     logger.info(

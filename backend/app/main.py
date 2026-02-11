@@ -200,7 +200,7 @@ async def semantic_search(q: str, limit: int = 10):
         scored.append(
             {
                 "file_id": f.id,
-                "filename": f.filename,
+                "filename": Path(f.current_path).name if f.current_path else f.filename,
                 "summary": f.summary or "",
                 "cluster_id": f.cluster_id,
                 "current_path": f.current_path,
@@ -252,7 +252,8 @@ async def get_graph():
             {
                 "id": f"file-{f.id}",
                 "file_id": f.id,
-                "label": f.filename,
+                "label": Path(f.current_path).name if f.current_path else f.filename,
+                "filename": Path(f.current_path).name if f.current_path else f.filename,
                 "cluster_id": f.cluster_id,
                 "x": f.umap_x,
                 "y": f.umap_y,

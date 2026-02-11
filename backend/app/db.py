@@ -283,6 +283,16 @@ async def update_file_current_path(file_id: int, new_path: str):
         await db.commit()
 
 
+async def update_file_filename(file_id: int, new_filename: str):
+    """Update the filename field to match the actual on-disk name (e.g. after collision rename)."""
+    db = await get_db()
+    async with _lock:
+        await db.execute(
+            "UPDATE files SET filename=? WHERE id=?", (new_filename, file_id)
+        )
+        await db.commit()
+
+
 async def bulk_update_clusters(updates: list[tuple[int, int, float, float, str]]):
     """updates = [(file_id, cluster_id, umap_x, umap_y, current_path), ...]"""
     db = await get_db()

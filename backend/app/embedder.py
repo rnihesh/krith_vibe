@@ -15,7 +15,9 @@ logger = logging.getLogger("sefs.embedder")
 _ollama_available: Optional[bool] = None
 EMBED_DIM: int = 768  # default, updated after first call
 
-MAX_CHARS = 28000  # rough limit to stay within context windows
+MAX_CHARS = (
+    20000  # ~5000 tokens, safely under 8192 token limits for both Ollama and OpenAI
+)
 
 
 async def get_embedding(text: str) -> np.ndarray:
