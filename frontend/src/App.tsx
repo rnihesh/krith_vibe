@@ -5,14 +5,14 @@ import {
   Network,
   Map,
   RotateCw,
-  Wifi,
-  WifiOff,
   Search,
   FolderOpen,
   FileText,
   Activity,
   Sun,
   Moon,
+  X,
+  Sparkles,
 } from "lucide-react";
 import {
   GraphData,
@@ -22,7 +22,14 @@ import {
   EventLog,
   getClusterColor,
 } from "./types";
-import { getGraphData, getStatus, getEvents, rescan } from "./api";
+import {
+  getGraphData,
+  getStatus,
+  getEvents,
+  rescan,
+  semanticSearch,
+  SearchResult,
+} from "./api";
 import { useWebSocket } from "./hooks/useWebSocket";
 import { useTheme } from "./hooks/useTheme";
 import { GraphView } from "./views/GraphView";
@@ -36,6 +43,11 @@ export default function App() {
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [events, setEvents] = useState<EventLog[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const searchDebounce = useRef<ReturnType<typeof setTimeout>>(undefined);
   const [status, setStatus] = useState({
     file_count: 0,
     cluster_count: 0,
@@ -98,6 +110,39 @@ export default function App() {
     await rescan();
   };
 
+  // Semantic search with debounce
+  const handleSearchChange = useCallback((value: string) => {
+    setSearchQuery(value);
+    clearTimeout(searchDebounce.current);
+    if (!value.trim()) {
+      setSearchResults([]);
+      setIsSearching(false);
+      return;
+    }
+    setIsSearching(true);
+    searchDebounce.current = setTimeout(async () => {
+      try {
+        const results = await semanticSearch(value.trim());
+        setSearchResults(results);
+      } catch (e) {
+        console.warn("Search failed:", e);
+      } finally {
+        setIsSearching(false);
+      }
+    }, 400);
+  }, []);
+
+  const openSearchOverlay = useCallback(() => {
+    setSearchOpen(true);
+    setTimeout(() => searchInputRef.current?.focus(), 100);
+  }, []);
+
+  const closeSearchOverlay = useCallback(() => {
+    setSearchOpen(false);
+    setSearchQuery("");
+    setSearchResults([]);
+  }, []);
+
   return (
     <div className="flex flex-col h-screen bg-bg-main text-text-primary">
       {/* Top Bar */}
@@ -109,12 +154,14 @@ export default function App() {
         <div className="flex items-center gap-4 shrink-0">
           {/* Logo */}
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-accent flex items-center justify-center shadow-sm">
-              <Network size={16} className="text-white" />
-            </div>
-            <span className="font-semibold text-[15px] tracking-tight text-text-primary">
+            <img
+              src="/sefs.svg"
+              alt="SEFS"
+              className="w-8 h-8 rounded-lg shadow-sm"
+            />
+            {/* <span className="font-semibold text-[15px] tracking-tight text-text-primary">
               SEFS
-            </span>
+            </span> */}
           </div>
 
           {/* View Toggle */}
@@ -137,30 +184,36 @@ export default function App() {
           </div>
         </div>
 
-        {/* Center: Search */}
+        {/* Center: Search trigger pill */}
         <div className="flex-1 flex justify-center px-6">
-          <div className="relative w-full max-w-xs">
-            <Search
-              size={14}
-              className="absolute left-3 top-1/2 -translate-y-1/2 text-text-tertiary pointer-events-none"
-            />
-            <input
-              type="text"
-              placeholder="Search files..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full h-9 pl-9 pr-3 rounded-lg text-sm font-sans text-text-primary placeholder:text-text-tertiary focus:outline-none"
+          <button
+            onClick={openSearchOverlay}
+            className="flex items-center gap-2 h-9 px-4 rounded-xl text-sm text-text-tertiary cursor-pointer border-none"
+            style={{
+              background: "var(--bg-dark)",
+              border: "1px solid var(--bg-border)",
+              minWidth: 260,
+            }}
+          >
+            <Search size={14} />
+            <span className="flex-1 text-left">
+              Search files semantically...
+            </span>
+            <kbd
+              className="text-[10px] px-1.5 py-0.5 rounded font-mono"
               style={{
-                background: "var(--bg-dark)",
+                background: "var(--bg-card)",
                 border: "1px solid var(--bg-border)",
+                color: "var(--text-tertiary)",
               }}
-            />
-          </div>
+            >
+              ⌘K
+            </kbd>
+          </button>
         </div>
 
         {/* Right section */}
         <div className="flex items-center gap-3 shrink-0">
-          {/* Stats */}
           <div className="flex items-center gap-4 text-[13px] text-text-secondary">
             <span className="flex items-center gap-1.5">
               <FileText size={14} className="text-text-tertiary" />
@@ -172,7 +225,6 @@ export default function App() {
             </span>
           </div>
 
-          {/* Rescan */}
           <button
             onClick={handleRescan}
             disabled={isReclustering}
@@ -189,7 +241,6 @@ export default function App() {
             {isReclustering ? "Processing..." : "Rescan"}
           </button>
 
-          {/* Theme toggle */}
           <button
             onClick={toggleTheme}
             className="w-9 h-9 flex items-center justify-center rounded-lg text-text-secondary cursor-pointer border-none"
@@ -199,7 +250,6 @@ export default function App() {
             {isDark ? <Sun size={16} /> : <Moon size={16} />}
           </button>
 
-          {/* Connection status */}
           <div
             className={`flex items-center gap-1.5 text-[13px] ${
               connected ? "text-success" : "text-error"
@@ -215,6 +265,155 @@ export default function App() {
         </div>
       </header>
 
+      {/* ── Search Overlay (command-palette style) ── */}
+      <AnimatePresence>
+        {searchOpen && (
+          <>
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.15 }}
+              className="fixed inset-0 z-100"
+              style={{
+                background: "rgba(0,0,0,0.4)",
+                backdropFilter: "blur(4px)",
+              }}
+              onClick={closeSearchOverlay}
+            />
+            {/* Panel */}
+            <motion.div
+              initial={{ opacity: 0, y: -20, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -20, scale: 0.96 }}
+              transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+              className="fixed z-101 left-1/2 -translate-x-1/2 w-full max-w-xl"
+              style={{ top: "15vh" }}
+            >
+              <div
+                className="rounded-2xl overflow-hidden"
+                style={{
+                  background: "var(--bg-card)",
+                  border: "1px solid var(--bg-border)",
+                  boxShadow: "0 25px 60px rgba(0,0,0,0.25)",
+                }}
+              >
+                {/* Search input */}
+                <div
+                  className="flex items-center gap-3 px-5 h-14 border-b"
+                  style={{ borderColor: "var(--bg-border)" }}
+                >
+                  <Sparkles size={18} className="text-accent shrink-0" />
+                  <input
+                    ref={searchInputRef}
+                    type="text"
+                    placeholder="Describe what you're looking for..."
+                    value={searchQuery}
+                    onChange={(e) => handleSearchChange(e.target.value)}
+                    onKeyDown={(e) =>
+                      e.key === "Escape" && closeSearchOverlay()
+                    }
+                    className="flex-1 bg-transparent border-none outline-none text-[15px] text-text-primary placeholder:text-text-tertiary"
+                  />
+                  {isSearching && (
+                    <div className="w-4 h-4 border-2 border-accent border-t-transparent rounded-full animate-spin-slow" />
+                  )}
+                  <button
+                    onClick={closeSearchOverlay}
+                    className="w-7 h-7 flex items-center justify-center rounded-lg text-text-tertiary hover:text-text-primary cursor-pointer border-none bg-transparent"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+
+                {/* Results */}
+                <div className="max-h-[45vh] overflow-y-auto">
+                  {searchQuery &&
+                    searchResults.length === 0 &&
+                    !isSearching && (
+                      <div className="px-5 py-8 text-center text-text-tertiary text-sm">
+                        No matching files found.
+                      </div>
+                    )}
+                  {!searchQuery && (
+                    <div className="px-5 py-8 text-center text-text-tertiary text-sm">
+                      <p className="mb-1">
+                        Search semantically across your files
+                      </p>
+                      <p className="text-xs">
+                        Try: "my C++ code", "cooking recipes", "employment
+                        documents"
+                      </p>
+                    </div>
+                  )}
+                  {searchResults.map((r, i) => (
+                    <button
+                      key={r.file_id}
+                      onClick={() => {
+                        // Find the matching node in graphData and select it
+                        const node = graphData?.files.find(
+                          (f) => f.file_id === r.file_id,
+                        );
+                        if (node) setSelectedNode(node as GraphNode);
+                        closeSearchOverlay();
+                      }}
+                      className="w-full flex items-start gap-3 px-5 py-3 text-left cursor-pointer border-none bg-transparent hover:bg-bg-dark transition-colors"
+                      style={{
+                        borderBottom:
+                          i < searchResults.length - 1
+                            ? "1px solid var(--bg-border)"
+                            : "none",
+                      }}
+                    >
+                      <div
+                        className="w-2 h-2 rounded-full mt-2 shrink-0"
+                        style={{
+                          background: getClusterColor(r.cluster_id),
+                        }}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-0.5">
+                          <span className="text-sm font-medium text-text-primary truncate">
+                            {r.filename}
+                          </span>
+                          <span
+                            className="text-[10px] px-1.5 py-0.5 rounded font-mono shrink-0"
+                            style={{
+                              background: "var(--accent-light)",
+                              color: "var(--accent)",
+                            }}
+                          >
+                            {(r.score * 100).toFixed(0)}%
+                          </span>
+                        </div>
+                        {r.summary && (
+                          <p className="text-xs text-text-tertiary line-clamp-2 m-0">
+                            {r.summary.slice(0, 120)}
+                            {r.summary.length > 120 ? "..." : ""}
+                          </p>
+                        )}
+                      </div>
+                      <span className="text-[11px] text-text-tertiary uppercase shrink-0 mt-0.5">
+                        {r.file_type}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Keyboard shortcut: ⌘K */}
+      <KeyboardShortcut
+        combo="k"
+        onTrigger={() => {
+          if (searchOpen) closeSearchOverlay();
+          else openSearchOverlay();
+        }}
+      />
       {/* Main Content */}
       <div className="flex flex-1 overflow-hidden">
         {/* Visualization */}
@@ -321,4 +520,24 @@ function ViewToggle({
       {icon} {label}
     </button>
   );
+}
+
+function KeyboardShortcut({
+  combo,
+  onTrigger,
+}: {
+  combo: string;
+  onTrigger: () => void;
+}) {
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === combo) {
+        e.preventDefault();
+        onTrigger();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [combo, onTrigger]);
+  return null;
 }

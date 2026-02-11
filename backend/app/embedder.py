@@ -49,6 +49,41 @@ async def get_embedding(text: str) -> np.ndarray:
         return np.zeros(EMBED_DIM, dtype=np.float32)
 
 
+async def get_embedding_matching_dim(text: str, target_dim: int) -> np.ndarray:
+    """Generate embedding for text, ensuring output matches target_dim.
+    If Ollama produces 768-dim but stored embeddings are 1536-dim (OpenAI),
+    use OpenAI directly. And vice versa."""
+    if not text or not text.strip():
+        return np.zeros(target_dim, dtype=np.float32)
+
+    if len(text) > MAX_CHARS:
+        half = MAX_CHARS // 2
+        text = text[:half] + "\n...\n" + text[-half:]
+
+    # Try Ollama first
+    try:
+        emb = await _embed_ollama(text)
+        if len(emb) == target_dim:
+            return emb
+        logger.info(f"Ollama dim {len(emb)} != target {target_dim}, trying OpenAI")
+    except Exception:
+        pass
+
+    # Try OpenAI
+    try:
+        emb = await _embed_openai(text)
+        if len(emb) == target_dim:
+            return emb
+        logger.info(f"OpenAI dim {len(emb)} != target {target_dim}, truncating/padding")
+        # Last resort: pad or truncate
+        if len(emb) < target_dim:
+            return np.pad(emb, (0, target_dim - len(emb)))
+        return emb[:target_dim]
+    except Exception as e:
+        logger.error(f"All embedding models failed: {e}")
+        return np.zeros(target_dim, dtype=np.float32)
+
+
 async def _embed_ollama(text: str) -> np.ndarray:
     global EMBED_DIM
     import ollama as ol

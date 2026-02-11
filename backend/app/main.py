@@ -15,9 +15,12 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+import numpy as np
+
 from app.config import settings
 from app import db, pipeline
 from app.watcher import watcher
+from app.embedder import get_embedding, get_embedding_matching_dim
 
 logging.basicConfig(
     level=logging.INFO,
@@ -157,6 +160,57 @@ async def get_clusters():
 @app.get("/api/events")
 async def get_events(limit: int = 50):
     return await db.get_recent_events(limit)
+
+
+@app.get("/api/search")
+async def semantic_search(q: str, limit: int = 10):
+    """Semantic search over files using cosine similarity of embeddings."""
+    if not q or not q.strip():
+        return []
+
+    files = await db.get_all_files()
+
+    # Determine embedding dimension from stored files
+    target_dim = None
+    for f in files:
+        if f.embedding is not None and len(f.embedding) > 0:
+            target_dim = len(f.embedding)
+            break
+
+    if target_dim is None:
+        return []
+
+    query_emb = await get_embedding_matching_dim(q.strip(), target_dim)
+
+    scored = []
+    for f in files:
+        if f.embedding is None or len(f.embedding) == 0:
+            continue
+        emb = f.embedding
+        # Handle dimension mismatch by padding/truncating
+        if len(emb) != len(query_emb):
+            if len(emb) < len(query_emb):
+                emb = np.pad(emb, (0, len(query_emb) - len(emb)))
+            else:
+                emb = emb[: len(query_emb)]
+        # Cosine similarity
+        dot = np.dot(query_emb, emb)
+        norm = np.linalg.norm(query_emb) * np.linalg.norm(emb)
+        sim = float(dot / norm) if norm > 0 else 0.0
+        scored.append(
+            {
+                "file_id": f.id,
+                "filename": f.filename,
+                "summary": f.summary or "",
+                "cluster_id": f.cluster_id,
+                "current_path": f.current_path,
+                "file_type": f.file_type,
+                "score": round(sim, 4),
+            }
+        )
+
+    scored.sort(key=lambda x: x["score"], reverse=True)
+    return scored[:limit]
 
 
 @app.post("/api/rescan")

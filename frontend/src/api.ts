@@ -41,3 +41,20 @@ export async function openFile(fileId: number): Promise<{ message: string }> {
   if (!res.ok) throw new Error(`Failed to open file: ${res.statusText}`);
   return res.json();
 }
+
+export interface SearchResult {
+  file_id: number;
+  filename: string;
+  summary: string;
+  cluster_id: number;
+  current_path: string;
+  file_type: string;
+  score: number;
+}
+
+export async function semanticSearch(
+  query: string,
+  limit = 10,
+): Promise<SearchResult[]> {
+  return fetchJSON(`/api/search?q=${encodeURIComponent(query)}&limit=${limit}`);
+}

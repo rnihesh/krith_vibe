@@ -97,10 +97,19 @@ export function GraphView({ data, onNodeClick, searchQuery }: Props) {
     if (graphData.nodes.length > 0 && dataKey !== prevDataKey.current) {
       prevDataKey.current = dataKey;
       hasZoomedToFit.current = false;
+      // Zoom to fit after layout has had time to settle
+      const timer = setTimeout(() => {
+        if (!hasZoomedToFit.current && graphRef.current) {
+          graphRef.current.zoomToFit(400, 80);
+          hasZoomedToFit.current = true;
+        }
+      }, 2000);
+      return () => clearTimeout(timer);
     }
   }, [dataKey, graphData.nodes.length]);
 
   const handleEngineStop = useCallback(() => {
+    // Engine won't stop with Infinity cooldown, but keep as safety
     if (!hasZoomedToFit.current && graphRef.current) {
       graphRef.current.zoomToFit(400, 80);
       hasZoomedToFit.current = true;
@@ -136,10 +145,16 @@ export function GraphView({ data, onNodeClick, searchQuery }: Props) {
     fg.d3ReheatSimulation();
   }, [graphData]);
 
-  // Pin node position after drag so it stays put
+  // Pin node position after drag temporarily, then unpin after settle
   const handleNodeDragEnd = useCallback((node: any) => {
+    // Temporarily pin so it doesn't fly away
     node.fx = node.x;
     node.fy = node.y;
+    // Unpin after 3 seconds so it rejoins the simulation
+    setTimeout(() => {
+      node.fx = undefined;
+      node.fy = undefined;
+    }, 3000);
   }, []);
 
   const matchesSearch = useCallback(
@@ -297,9 +312,9 @@ export function GraphView({ data, onNodeClick, searchQuery }: Props) {
           }}
           onNodeDragEnd={handleNodeDragEnd}
           onEngineStop={handleEngineStop}
-          d3AlphaDecay={0.02}
-          d3VelocityDecay={0.3}
-          cooldownTime={3000}
+          d3AlphaDecay={0.008}
+          d3VelocityDecay={0.25}
+          cooldownTime={Infinity}
           warmupTicks={50}
           enableZoomInteraction={true}
           enablePanInteraction={true}
