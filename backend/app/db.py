@@ -264,6 +264,16 @@ async def update_file_umap(file_id: int, x: float, y: float):
         await db.commit()
 
 
+async def update_file_embedding(file_id: int, embedding: np.ndarray):
+    db = await get_db()
+    async with _lock:
+        await db.execute(
+            "UPDATE files SET embedding=? WHERE id=?",
+            (_embed_to_bytes(embedding), file_id),
+        )
+        await db.commit()
+
+
 async def update_file_current_path(file_id: int, new_path: str):
     db = await get_db()
     async with _lock:

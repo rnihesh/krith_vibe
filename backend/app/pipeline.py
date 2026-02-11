@@ -123,6 +123,54 @@ async def run_clustering():
 
     await broadcast({"type": "reclustering_start"})
 
+    # ── Normalize embedding dimensions ──
+    # Different backends (Ollama=768, OpenAI=1536) may produce different dims.
+    # Find the most common dimension and re-embed or resize outliers.
+    dims = [e.shape[0] for e in embeddings]
+    unique_dims = set(dims)
+    if len(unique_dims) > 1:
+        from collections import Counter
+
+        dim_counts = Counter(dims)
+        target_dim = dim_counts.most_common(1)[0][0]
+        logger.warning(
+            f"Mixed embedding dimensions detected: {dict(dim_counts)}. "
+            f"Re-embedding {sum(1 for d in dims if d != target_dim)} files "
+            f"to match target dim={target_dim}."
+        )
+        for i in range(len(embeddings)):
+            if dims[i] != target_dim:
+                f = valid_files[i]
+                # Try to re-embed the file with the current model
+                try:
+                    source = Path(f.original_path)
+                    if source.exists() and extractor.is_supported(source):
+                        result = extractor.extract(source)
+                        new_emb = await embedder.get_embedding(result.text)
+                        if new_emb.shape[0] == target_dim:
+                            embeddings[i] = new_emb
+                            await db.update_file_embedding(f.id, new_emb)
+                            logger.info(
+                                f"Re-embedded {f.filename} ({dims[i]}->{target_dim})"
+                            )
+                            continue
+                except Exception as e:
+                    logger.warning(f"Re-embedding failed for {f.filename}: {e}")
+
+                # Fallback: pad or truncate to match target dimension
+                if dims[i] < target_dim:
+                    embeddings[i] = np.pad(
+                        embeddings[i],
+                        (0, target_dim - dims[i]),
+                        mode="constant",
+                        constant_values=0,
+                    )
+                else:
+                    embeddings[i] = embeddings[i][:target_dim]
+                logger.info(
+                    f"Resized embedding for {f.filename} ({dims[i]}->{target_dim})"
+                )
+
     emb_matrix = np.vstack(embeddings)
 
     # Cluster
@@ -144,6 +192,19 @@ async def run_clustering():
 
     for cid in unique_labels:
         if cid < 0:
+            # Noise / uncategorised points — create a dedicated folder
+            noise_count = int((labels == cid).sum())
+            cluster_names[int(cid)] = "Uncategorised"
+            cluster_record = db.ClusterRecord(
+                id=int(cid),
+                name="Uncategorised",
+                description=f"{noise_count} files that don't clearly belong to any cluster",
+                folder_path=str(settings.root_path / "Uncategorised"),
+                centroid=None,
+                file_count=noise_count,
+                created_at=datetime.utcnow().isoformat(),
+            )
+            await db.upsert_cluster(cluster_record)
             continue
         mask = labels == cid
         cluster_file_indices = np.where(mask)[0]

@@ -31,14 +31,22 @@ async def generate_cluster_name(
     combined = "\n---\n".join(snippets)
     existing_str = ", ".join(existing_names) if existing_names else "none"
 
-    prompt = f"""Based on these document excerpts from a folder of related files, generate a short descriptive folder name (2-4 words, use underscores between words, no special characters).
+    prompt = f"""You are organizing files into folders. Given these document excerpts that belong to the SAME cluster, identify the single common theme or topic that unites ALL of them.
 
-Existing folder names (avoid duplicates): {existing_str}
+Rules:
+- The folder name MUST describe what ALL documents have in common
+- Use 2-3 words maximum, separated by underscores
+- Be specific: "Cooking_Recipes" not "Food_Files", "Legal_Contracts" not "Documents"
+- Do NOT append "_Files" or "_Documents" to the name
+- Do NOT use generic names like "Miscellaneous" or "General"
+- If documents are code/programming related, name by the domain (e.g., "Algorithms", "Web_Development")
+
+Existing folder names (you MUST NOT duplicate these): {existing_str}
 
 Document excerpts:
 {combined}
 
-Reply with ONLY the folder name, nothing else. Example: Machine_Learning_Research"""
+Reply with ONLY the folder name. Nothing else."""
 
     # Try Ollama
     try:
