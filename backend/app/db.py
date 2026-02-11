@@ -55,6 +55,11 @@ CREATE TABLE IF NOT EXISTS events (
     timestamp TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_files_cluster ON files(cluster_id);
 CREATE INDEX IF NOT EXISTS idx_files_hash ON files(content_hash);
 CREATE INDEX IF NOT EXISTS idx_events_ts ON events(timestamp DESC);
@@ -230,6 +235,19 @@ async def get_file_by_id(file_id: int) -> Optional[FileRecord]:
     return _row_to_file(row)
 
 
+async def get_file_by_hash(content_hash: str) -> Optional[FileRecord]:
+    """Return the most recently updated record for a content hash."""
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT * FROM files WHERE content_hash=? ORDER BY id DESC LIMIT 1",
+        (content_hash,),
+    )
+    row = await cursor.fetchone()
+    if not row:
+        return None
+    return _row_to_file(row)
+
+
 async def get_all_files() -> list[FileRecord]:
     db = await get_db()
     cursor = await db.execute("SELECT * FROM files ORDER BY id")
@@ -243,6 +261,13 @@ async def delete_file_by_path(path: str):
         await db.execute(
             "DELETE FROM files WHERE original_path=? OR current_path=?", (path, path)
         )
+        await db.commit()
+
+
+async def delete_file_by_id(file_id: int):
+    db = await get_db()
+    async with _lock:
+        await db.execute("DELETE FROM files WHERE id=?", (file_id,))
         await db.commit()
 
 
@@ -289,6 +314,29 @@ async def update_file_filename(file_id: int, new_filename: str):
     async with _lock:
         await db.execute(
             "UPDATE files SET filename=? WHERE id=?", (new_filename, file_id)
+        )
+        await db.commit()
+
+
+async def update_file_paths(
+    file_id: int,
+    original_path: str,
+    current_path: str,
+    filename: str,
+    modified_at: Optional[str] = None,
+):
+    """Update identity paths when a file is relocated/renamed by the user."""
+    db = await get_db()
+    if modified_at is None:
+        modified_at = datetime.utcnow().isoformat()
+    async with _lock:
+        await db.execute(
+            """
+            UPDATE files
+            SET original_path=?, current_path=?, filename=?, modified_at=?
+            WHERE id=?
+            """,
+            (original_path, current_path, filename, modified_at, file_id),
         )
         await db.commit()
 
@@ -386,6 +434,47 @@ async def add_event(file_id: int, event_type: str, detail: str = ""):
             (file_id, event_type, detail, datetime.utcnow().isoformat()),
         )
         await db.commit()
+
+
+# ─── Settings operations ─────────────────────────────────────
+
+
+async def get_setting(key: str) -> Optional[str]:
+    db = await get_db()
+    cursor = await db.execute("SELECT value FROM settings WHERE key=?", (key,))
+    row = await cursor.fetchone()
+    return row["value"] if row else None
+
+
+async def get_all_settings() -> dict[str, str]:
+    db = await get_db()
+    cursor = await db.execute("SELECT key, value FROM settings")
+    rows = await cursor.fetchall()
+    return {r["key"]: r["value"] for r in rows}
+
+
+async def set_setting(key: str, value: str):
+    db = await get_db()
+    async with _lock:
+        await db.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+            (key, value),
+        )
+        await db.commit()
+
+
+async def set_settings_bulk(settings_dict: dict[str, str]):
+    db = await get_db()
+    async with _lock:
+        for key, value in settings_dict.items():
+            await db.execute(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+                (key, value),
+            )
+        await db.commit()
+
+
+# ─── Event operations ─────────────────────────────────────
 
 
 async def get_recent_events(limit: int = 50) -> list[dict]:

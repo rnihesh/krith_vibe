@@ -8,9 +8,10 @@ interface Props {
   data: GraphData | null;
   onNodeClick: (node: GraphNode) => void;
   searchQuery: string;
+  rootFolder?: string;
 }
 
-export function GraphView({ data, onNodeClick, searchQuery }: Props) {
+export function GraphView({ data, onNodeClick, searchQuery, rootFolder }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<ForceGraphMethods | undefined>(undefined);
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
@@ -331,7 +332,10 @@ export function GraphView({ data, onNodeClick, searchQuery }: Props) {
   }, []);
 
   return (
-    <div ref={containerRef} className="w-full h-full bg-bg-main relative">
+    <div
+      ref={containerRef}
+      className="w-full h-full bg-bg-main relative overflow-hidden"
+    >
       {graphData.nodes.length > 0 && (
         <>
           <ForceGraph2D
@@ -410,8 +414,35 @@ export function GraphView({ data, onNodeClick, searchQuery }: Props) {
         </>
       )}
       {(!data || graphData.nodes.length === 0) && (
-        <div className="absolute inset-0 flex items-center justify-center text-text-tertiary text-sm">
-          No files to display. Drop files into the watched folder.
+        <div className="absolute inset-0 flex flex-col items-center justify-center text-text-tertiary text-sm gap-3">
+          <div className="w-16 h-16 rounded-2xl bg-bg-dark flex items-center justify-center mb-2">
+            <svg
+              width="32"
+              height="32"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              className="text-text-tertiary"
+            >
+              <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
+              <polyline points="13 2 13 9 20 9" />
+            </svg>
+          </div>
+          <p className="font-medium text-text-secondary">
+            No files yet
+          </p>
+          <p className="text-xs text-center max-w-xs leading-relaxed">
+            Drop files into the watched folder to get started.
+            {rootFolder ? (
+              <>
+                <br />
+                <span className="font-mono">{rootFolder}</span>
+              </>
+            ) : null}
+            <br />
+            Supported: PDF, TXT, MD, DOCX, CSV, RST
+          </p>
         </div>
       )}
     </div>

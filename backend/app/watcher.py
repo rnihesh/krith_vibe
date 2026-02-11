@@ -1,26 +1,24 @@
 """
 SEFS File Watcher — monitors root folder for file changes using watchdog.
+Uses a single-task debounce: collects pending paths, resets timer on each event,
+flushes all pending in one batch when timer fires.
 """
 
 from __future__ import annotations
 import asyncio
 import logging
-import time
+import threading
 from pathlib import Path
 from typing import Callable, Awaitable
 
 from watchdog.observers import Observer
 from watchdog.events import (
     FileSystemEventHandler,
-    FileCreatedEvent,
-    FileModifiedEvent,
-    FileDeletedEvent,
-    FileMovedEvent,
 )
 
 from app.config import settings
 from app.extractor import is_supported
-from app.sync import is_sync_locked
+from app.sync import is_sync_locked, is_recently_synced
 
 logger = logging.getLogger("sefs.watcher")
 
@@ -29,7 +27,7 @@ DEBOUNCE_SECONDS = 1.5
 
 
 class SEFSEventHandler(FileSystemEventHandler):
-    """Handles filesystem events with debouncing and sync-lock awareness."""
+    """Handles filesystem events with single-task debounce and sync-lock awareness."""
 
     def __init__(
         self, loop: asyncio.AbstractEventLoop, on_change: Callable, on_delete: Callable
@@ -38,8 +36,9 @@ class SEFSEventHandler(FileSystemEventHandler):
         self._loop = loop
         self._on_change = on_change
         self._on_delete = on_delete
-        self._pending: dict[str, float] = {}
-        self._debounce_task: asyncio.Task | None = None
+        self._pending_changes: dict[str, str] = {}  # path -> action
+        self._pending_lock = threading.Lock()
+        self._flush_future = None
 
     def _should_ignore(self, path: str) -> bool:
         p = Path(path)
@@ -48,6 +47,11 @@ class SEFSEventHandler(FileSystemEventHandler):
         if not is_supported(p):
             return True
         if is_sync_locked():
+            return True
+        # Belt-and-suspenders: ignore paths that were recently moved by sync,
+        # even if the sync lock has already been released (macOS FSEvents latency).
+        if is_recently_synced(path):
+            logger.debug(f"Ignoring recently-synced path: {p.name}")
             return True
         return False
 
@@ -81,27 +85,24 @@ class SEFSEventHandler(FileSystemEventHandler):
             self._schedule(event.dest_path, "change")
 
     def _schedule(self, path: str, action: str):
-        key = f"{action}:{path}"
-        self._pending[key] = time.time()
-        # Schedule debounced processing
-        asyncio.run_coroutine_threadsafe(self._process_pending(), self._loop)
+        with self._pending_lock:
+            self._pending_changes[path] = action
+            # Cancel existing timer and reset.
+            if self._flush_future and not self._flush_future.done():
+                self._flush_future.cancel()
+            self._flush_future = asyncio.run_coroutine_threadsafe(
+                self._debounce_flush(), self._loop
+            )
 
-    async def _process_pending(self):
+    async def _debounce_flush(self):
+        """Wait for debounce window, then flush all pending paths in one batch."""
         await asyncio.sleep(DEBOUNCE_SECONDS)
-        now = time.time()
-        to_process = []
-        remaining = {}
+        with self._pending_lock:
+            # Snapshot and clear pending.
+            batch = dict(self._pending_changes)
+            self._pending_changes.clear()
 
-        for key, ts in self._pending.items():
-            if now - ts >= DEBOUNCE_SECONDS:
-                to_process.append(key)
-            else:
-                remaining[key] = ts
-
-        self._pending = remaining
-
-        for key in to_process:
-            action, path = key.split(":", 1)
+        for path, action in batch.items():
             try:
                 if action == "change":
                     await self._on_change(Path(path))

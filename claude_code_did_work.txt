@@ -1,0 +1,1421 @@
+
+╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Plan to implement                                                                                                                                                                                     │
+│                                                                                                                                                                                                       │
+│ SEFS Hackathon Sprint Plan                                                                                                                                                                            │
+│                                                                                                                                                                                                       │
+│ Context                                                                                                                                                                                               │
+│                                                                                                                                                                                                       │
+│ SEFS is a semantic file system for the AI Week hackathon (PS-3). The core functionality works — file watching, embedding, HDBSCAN clustering, OS-level sync, real-time graph/spatial visualization.   │
+│ But it has race conditions, silent failures, no model selection UI, and lacks "wow factor" features. Judges evaluate edge case handling, performance, latency, robustness, and backend engineering.   │
+│ This overnight sprint makes the app flawless and adds differentiating features.                                                                                                                       │
+│                                                                                                                                                                                                       │
+│ ---                                                                                                                                                                                                   │
+│ Phase 1: Fix All Existing Issues (make it flawless)                                                                                                                                                   │
+│                                                                                                                                                                                                       │
+│ 1.1 Pipeline Race Conditions                                                                                                                                                                          │
+│                                                                                                                                                                                                       │
+│ Files: backend/app/main.py, backend/app/pipeline.py                                                                                                                                                   │
+│                                                                                                                                                                                                       │
+│ Replace the bare _recluster_scheduled / _recluster_lock globals in main.py with a proper ReclusterScheduler class:                                                                                    │
+│ - Debounces rapid requests (2s window)                                                                                                                                                                │
+│ - Ensures only one clustering runs at a time via asyncio.Lock                                                                                                                                         │
+│ - Re-checks pending flag after each run to catch events that arrived during clustering                                                                                                                │
+│ - Both on_file_change and on_file_delete use scheduler.request() instead of raw asyncio.sleep                                                                                                         │
+│                                                                                                                                                                                                       │
+│ In pipeline.py run_clustering(): wrap all file access in try/except FileNotFoundError (files can be deleted between DB query and disk read at ~line 146 and ~line 212). Fall back to using f.summary  │
+│ when file is gone.                                                                                                                                                                                    │
+│                                                                                                                                                                                                       │
+│ 1.2 Embedder Global State                                                                                                                                                                             │
+│                                                                                                                                                                                                       │
+│ File: backend/app/embedder.py                                                                                                                                                                         │
+│                                                                                                                                                                                                       │
+│ EMBED_DIM is mutated globally by concurrent async calls to _embed_ollama (768-dim) and _embed_openai (1536-dim). Fix: replace with _last_embed_dim protected by asyncio.Lock. Update dim after each   │
+│ successful call; read dim under lock for zero-vector fallback.                                                                                                                                        │
+│                                                                                                                                                                                                       │
+│ 1.3 API Robustness                                                                                                                                                                                    │
+│                                                                                                                                                                                                       │
+│ File: backend/app/main.py                                                                                                                                                                             │
+│                                                                                                                                                                                                       │
+│ - Clamp limit params: get_events → max 200, semantic_search → max 50                                                                                                                                  │
+│ - Add asyncio.wait_for(timeout=15.0) around embedding call in search endpoint                                                                                                                         │
+│ - WebSocket loop: wrap inner handler in broad except Exception (not just WebSocketDisconnect), move manager.disconnect(ws) to finally block                                                           │
+│ - Add startup health check in lifespan: verify at least one of Ollama/OpenAI is reachable, log warning if not                                                                                         │
+│                                                                                                                                                                                                       │
+│ 1.4 Watcher Debounce Fix                                                                                                                                                                              │
+│                                                                                                                                                                                                       │
+│ File: backend/app/watcher.py                                                                                                                                                                          │
+│                                                                                                                                                                                                       │
+│ Replace per-event coroutine spawning with a single-task debounce: collect pending paths in a dict, cancel+reset a single timer on each event, flush all pending paths in one batch when timer fires.  │
+│ Prevents 100 coroutines from spawning during rapid file additions.                                                                                                                                    │
+│                                                                                                                                                                                                       │
+│ 1.5 Frontend Error Handling                                                                                                                                                                           │
+│                                                                                                                                                                                                       │
+│ Files: New frontend/src/components/Toast.tsx, modify frontend/src/App.tsx                                                                                                                             │
+│                                                                                                                                                                                                       │
+│ Create a toast notification component (bottom-right, above EventFeed). Uses framer-motion, auto-dismiss 5s, themed with existing CSS variables. Wire into fetchData catch blocks and API errors so    │
+│ users see feedback instead of silent console.warn.                                                                                                                                                    │
+│                                                                                                                                                                                                       │
+│ 1.6 Loading & Empty States                                                                                                                                                                            │
+│                                                                                                                                                                                                       │
+│ Files: frontend/src/App.tsx, frontend/src/views/GraphView.tsx, frontend/src/views/SpatialView.tsx                                                                                                     │
+│                                                                                                                                                                                                       │
+│ - Add isLoading state, show spinner during initial graph fetch                                                                                                                                        │
+│ - Replace generic "No files to display" with onboarding empty state: show ROOT_FOLDER path (fetched from /api/status), supported file types, instructions                                             │
+│                                                                                                                                                                                                       │
+│ 1.7 WebSocket Exponential Backoff                                                                                                                                                                     │
+│                                                                                                                                                                                                       │
+│ File: frontend/src/hooks/useWebSocket.ts                                                                                                                                                              │
+│                                                                                                                                                                                                       │
+│ Replace fixed 2s reconnect with exponential backoff: 1s base, 2x growth, 30s max. Reset retry count on successful connect.                                                                            │
+│                                                                                                                                                                                                       │
+│ 1.8 Clean Up Electron Artifacts                                                                                                                                                                       │
+│                                                                                                                                                                                                       │
+│ File: frontend/package.json                                                                                                                                                                           │
+│                                                                                                                                                                                                       │
+│ Remove electron, electron-builder, concurrently, wait-on from devDependencies. Remove electron:dev/electron:build scripts, "main" field, and "build" block.                                           │
+│                                                                                                                                                                                                       │
+│ 1.9 Tauri Backend Spawning                                                                                                                                                                            │
+│                                                                                                                                                                                                       │
+│ Files: frontend/src-tauri/src/lib.rs, frontend/src-tauri/Cargo.toml                                                                                                                                   │
+│                                                                                                                                                                                                       │
+│ - Add fallback: try uv run uvicorn ... first, then python3 -m uvicorn ... if uv not found                                                                                                             │
+│ - Add health check polling thread: poll localhost:8484/api/status for up to 30s before considering backend ready                                                                                      │
+│ - Add reqwest = { version = "0.12", features = ["blocking"] } to Cargo.toml                                                                                                                           │
+│                                                                                                                                                                                                       │
+│ ---                                                                                                                                                                                                   │
+│ Phase 2: Settings Page (Model Selection)                                                                                                                                                              │
+│                                                                                                                                                                                                       │
+│ 2.1 Backend                                                                                                                                                                                           │
+│                                                                                                                                                                                                       │
+│ Files: New backend/app/settings.py, modify backend/app/db.py, backend/app/main.py, backend/app/config.py                                                                                              │
+│                                                                                                                                                                                                       │
+│ - Add settings table to DB schema (key TEXT PRIMARY KEY, value TEXT)                                                                                                                                  │
+│ - New settings.py module: get_settings(), save_settings(), test_connection()                                                                                                                          │
+│ - Supports: provider (ollama/openai), ollama_host, ollama_embed_model, ollama_llm_model, openai_api_key, openai_model                                                                                 │
+│ - Three new endpoints: GET /api/settings, PUT /api/settings, POST /api/settings/test                                                                                                                  │
+│ - config.py: add update_from_dict() method to update runtime settings                                                                                                                                 │
+│ - save_settings() updates both DB and live config via settings.update_from_dict()                                                                                                                     │
+│                                                                                                                                                                                                       │
+│ 2.2 Frontend                                                                                                                                                                                          │
+│                                                                                                                                                                                                       │
+│ Files: New frontend/src/components/SettingsModal.tsx, modify frontend/src/api.ts, frontend/src/App.tsx                                                                                                │
+│                                                                                                                                                                                                       │
+│ Settings modal (gear icon in header, between theme toggle and live indicator):                                                                                                                        │
+│ - Same overlay pattern as search (backdrop blur, rounded-2xl card, bg-bg-card)                                                                                                                        │
+│ - Radio toggle: Ollama / OpenAI                                                                                                                                                                       │
+│ - Conditional fields: Ollama shows host+embed model+LLM model; OpenAI shows API key (masked) + model                                                                                                  │
+│ - "Test Connection" button (bg-bg-dark) and "Save" button (bg-accent)                                                                                                                                 │
+│ - Success/failure feedback inline                                                                                                                                                                     │
+│                                                                                                                                                                                                       │
+│ ---                                                                                                                                                                                                   │
+│ Phase 3: AI Chat with Files (RAG)                                                                                                                                                                     │
+│                                                                                                                                                                                                       │
+│ 3.1 Backend                                                                                                                                                                                           │
+│                                                                                                                                                                                                       │
+│ Files: New backend/app/chat.py, modify backend/app/main.py                                                                                                                                            │
+│                                                                                                                                                                                                       │
+│ POST /api/chat — SSE streaming endpoint:                                                                                                                                                              │
+│ 1. Semantic search for top 5 relevant files (reuse existing cosine similarity logic)                                                                                                                  │
+│ 2. Build context from file summaries + content snippets (first 1500 chars)                                                                                                                            │
+│ 3. Stream LLM response via Ollama (with OpenAI fallback)                                                                                                                                              │
+│ 4. Yields SSE events: {"type":"sources","files":[...]} → {"type":"token","content":"..."} → {"type":"done"}                                                                                           │
+│                                                                                                                                                                                                       │
+│ Prompt template instructs LLM to answer based on file contents, cite filenames, and be honest when files don't contain relevant info.                                                                 │
+│                                                                                                                                                                                                       │
+│ 3.2 Frontend                                                                                                                                                                                          │
+│                                                                                                                                                                                                       │
+│ Files: New frontend/src/components/ChatPanel.tsx, modify frontend/src/api.ts, frontend/src/App.tsx                                                                                                    │
+│                                                                                                                                                                                                       │
+│ Chat drawer (400px, slides from right, toggle via MessageSquare icon in header):                                                                                                                      │
+│ - Message list: user bubbles (right-aligned, bg-accent-light, rounded-2xl) and AI bubbles (left-aligned, bg-bg-dark, rounded-2xl)                                                                     │
+│ - Source files shown as small pills under AI messages (click to select file in graph)                                                                                                                 │
+│ - Input at bottom with send button (bg-accent)                                                                                                                                                        │
+│ - Streaming: read SSE via fetch ReadableStream, append tokens to current AI message                                                                                                                   │
+│ - Typing indicator (three-dot CSS animation)                                                                                                                                                          │
+│ - Theme-matched, no generic chatbot look                                                                                                                                                              │
+│                                                                                                                                                                                                       │
+│ ---                                                                                                                                                                                                   │
+│ Phase 4: Relationship Insights                                                                                                                                                                        │
+│                                                                                                                                                                                                       │
+│ 4.1 Backend                                                                                                                                                                                           │
+│                                                                                                                                                                                                       │
+│ File: backend/app/main.py                                                                                                                                                                             │
+│                                                                                                                                                                                                       │
+│ Two new endpoints:                                                                                                                                                                                    │
+│ - GET /api/file/{id}/related?limit=5 — returns top N similar files with cosine similarity scores                                                                                                      │
+│ - GET /api/file/{id1}/compare/{id2} — uses LLM to explain relationship between two files (reuses embedder.generate_summary)                                                                           │
+│                                                                                                                                                                                                       │
+│ 4.2 Frontend                                                                                                                                                                                          │
+│                                                                                                                                                                                                       │
+│ Files: frontend/src/components/Sidebar.tsx, frontend/src/api.ts, frontend/src/types.ts                                                                                                                │
+│                                                                                                                                                                                                       │
+│ In Sidebar, when a file is selected, fetch and show "Related Files" section:                                                                                                                          │
+│ - List of related files with cluster color dot, filename, similarity percentage badge                                                                                                                 │
+│ - Click a related file to navigate to it (updates selectedNode)                                                                                                                                       │
+│ - Styled consistently: bg-bg-dark rounded-lg items, accent-light similarity badges                                                                                                                    │
+│                                                                                                                                                                                                       │
+│ ---                                                                                                                                                                                                   │
+│ Phase 5: Smart Notifications                                                                                                                                                                          │
+│                                                                                                                                                                                                       │
+│ 5.1 Backend                                                                                                                                                                                           │
+│                                                                                                                                                                                                       │
+│ File: backend/app/pipeline.py                                                                                                                                                                         │
+│                                                                                                                                                                                                       │
+│ Enrich WebSocket broadcast events:                                                                                                                                                                    │
+│ - reclustering_end: include cluster summaries (name + file count), file movements (which files moved where), total moves count                                                                        │
+│ - file_added/file_modified: include file_type, word_count, summary snippet                                                                                                                            │
+│ - Cap movement details at 10 per event                                                                                                                                                                │
+│                                                                                                                                                                                                       │
+│ 5.2 Frontend                                                                                                                                                                                          │
+│                                                                                                                                                                                                       │
+│ Files: frontend/src/components/EventFeed.tsx, frontend/src/types.ts                                                                                                                                   │
+│                                                                                                                                                                                                       │
+│ Upgrade notification messages:                                                                                                                                                                        │
+│ - "Added report.pdf (2,340 words)" instead of "Added: file"                                                                                                                                           │
+│ - "Organized into 4 groups (3 files moved)" instead of "Reclustered into 4 groups"                                                                                                                    │
+│ - Extend WSEvent interface with new optional fields                                                                                                                                                   │
+│                                                                                                                                                                                                       │
+│ ---                                                                                                                                                                                                   │
+│ Phase 6: Performance Dashboard                                                                                                                                                                        │
+│                                                                                                                                                                                                       │
+│ 6.1 Backend                                                                                                                                                                                           │
+│                                                                                                                                                                                                       │
+│ Files: New backend/app/metrics.py, modify backend/app/pipeline.py, backend/app/main.py                                                                                                                │
+│                                                                                                                                                                                                       │
+│ - metrics.py: PipelineMetrics dataclass with deques (maxlen=100) for extraction/embedding/clustering times. Timer context manager. get_summary() returns averages.                                    │
+│ - Wrap pipeline stages with Timer in process_file() and run_clustering()                                                                                                                              │
+│ - New endpoint: GET /api/metrics                                                                                                                                                                      │
+│                                                                                                                                                                                                       │
+│ 6.2 Frontend                                                                                                                                                                                          │
+│                                                                                                                                                                                                       │
+│ Files: New frontend/src/components/MetricsPanel.tsx, modify frontend/src/api.ts, frontend/src/App.tsx                                                                                                 │
+│                                                                                                                                                                                                       │
+│ Collapsible panel (bottom-left, above cluster legend). Collapsed: small "Performance" pill. Expanded: compact card showing avg extraction ms, avg embedding ms, last clustering ms, total files       │
+│ processed. Styled with bg-bg-card, matching theme. Polls /api/metrics every 10s when expanded.                                                                                                        │
+│                                                                                                                                                                                                       │
+│ ---                                                                                                                                                                                                   │
+│ Files Summary                                                                                                                                                                                         │
+│                                                                                                                                                                                                       │
+│ New Files (7)                                                                                                                                                                                         │
+│ ┌───────────────────────────────────────────┬───────────────────────────────────────────────┐                                                                                                         │
+│ │                   File                    │                    Purpose                    │                                                                                                         │
+│ ├───────────────────────────────────────────┼───────────────────────────────────────────────┤                                                                                                         │
+│ │ backend/app/settings.py                   │ Runtime settings management + test connection │                                                                                                         │
+│ ├───────────────────────────────────────────┼───────────────────────────────────────────────┤                                                                                                         │
+│ │ backend/app/chat.py                       │ RAG chat with SSE streaming                   │                                                                                                         │
+│ ├───────────────────────────────────────────┼───────────────────────────────────────────────┤                                                                                                         │
+│ │ backend/app/metrics.py                    │ Pipeline performance instrumentation          │                                                                                                         │
+│ ├───────────────────────────────────────────┼───────────────────────────────────────────────┤                                                                                                         │
+│ │ frontend/src/components/Toast.tsx         │ Error/success toast notifications             │                                                                                                         │
+│ ├───────────────────────────────────────────┼───────────────────────────────────────────────┤                                                                                                         │
+│ │ frontend/src/components/SettingsModal.tsx │ Model selection settings modal                │                                                                                                         │
+│ ├───────────────────────────────────────────┼───────────────────────────────────────────────┤                                                                                                         │
+│ │ frontend/src/components/ChatPanel.tsx     │ AI chat drawer                                │                                                                                                         │
+│ ├───────────────────────────────────────────┼───────────────────────────────────────────────┤                                                                                                         │
+│ │ frontend/src/components/MetricsPanel.tsx  │ Performance stats panel                       │                                                                                                         │
+│ └───────────────────────────────────────────┴───────────────────────────────────────────────┘                                                                                                         │
+│ Modified Files (18)                                                                                                                                                                                   │
+│ ┌───────────────────────────────────────┬────────────────────────────────────────────────────────────────────────────────────────────────┐                                                            │
+│ │                 File                  │                                          Key Changes                                           │                                                            │
+│ ├───────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────┤                                                            │
+│ │ backend/app/main.py                   │ ReclusterScheduler, WS error handling, 6 new endpoints, limit validation, startup health check │                                                            │
+│ ├───────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────┤                                                            │
+│ │ backend/app/pipeline.py               │ FileNotFoundError guards, metrics timers, enriched broadcast events                            │                                                            │
+│ ├───────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────┤                                                            │
+│ │ backend/app/embedder.py               │ Fix global EMBED_DIM race condition with asyncio.Lock                                          │                                                            │
+│ ├───────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────┤                                                            │
+│ │ backend/app/watcher.py                │ Single-task debounce pattern replacing per-event coroutines                                    │                                                            │
+│ ├───────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────┤                                                            │
+│ │ backend/app/db.py                     │ Add settings table + get/set functions                                                         │                                                            │
+│ ├───────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────┤                                                            │
+│ │ backend/app/config.py                 │ Add update_from_dict() for runtime config changes                                              │                                                            │
+│ ├───────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────┤                                                            │
+│ │ frontend/src/App.tsx                  │ Toast state, loading state, settings/chat/metrics buttons                                      │                                                            │
+│ ├───────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────┤                                                            │
+│ │ frontend/src/api.ts                   │ New API functions: settings, chat, metrics, related files                                      │                                                            │
+│ ├───────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────┤                                                            │
+│ │ frontend/src/types.ts                 │ Extend WSEvent, add new interfaces                                                             │                                                            │
+│ ├───────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────┤                                                            │
+│ │ frontend/src/hooks/useWebSocket.ts    │ Exponential backoff reconnection                                                               │                                                            │
+│ ├───────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────┤                                                            │
+│ │ frontend/src/views/GraphView.tsx      │ Loading + empty state with root folder path                                                    │                                                            │
+│ ├───────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────┤                                                            │
+│ │ frontend/src/views/SpatialView.tsx    │ Loading state                                                                                  │                                                            │
+│ ├───────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────┤                                                            │
+│ │ frontend/src/components/Sidebar.tsx   │ Related Files section                                                                          │                                                            │
+│ ├───────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────┤                                                            │
+│ │ frontend/src/components/EventFeed.tsx │ Rich notification messages                                                                     │                                                            │
+│ ├───────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────┤                                                            │
+│ │ frontend/src/index.css                │ Typing indicator keyframes                                                                     │                                                            │
+│ ├───────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────┤                                                            │
+│ │ frontend/package.json                 │ Remove electron deps                                                                           │                                                            │
+│ ├───────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────┤                                                            │
+│ │ frontend/src-tauri/src/lib.rs         │ Fallback backend spawn + health check                                                          │                                                            │
+│ ├───────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────┤                                                            │
+│ │ frontend/src-tauri/Cargo.toml         │ Add reqwest dependency                                                                         │                                                            │
+│ └───────────────────────────────────────┴────────────────────────────────────────────────────────────────────────────────────────────────┘                                                            │
+│ ---                                                                                                                                                                                                   │
+│ Verification                                                                                                                                                                                          │
+│                                                                                                                                                                                                       │
+│ After each phase, test:                                                                                                                                                                               │
+│ 1. Stability: Add 10 files rapidly → only 1 recluster. Delete file mid-cluster → no crash. Kill backend → frontend shows error toast. Reconnect → backoff works.                                      │
+│ 2. Settings: Switch Ollama↔OpenAI → embeddings use correct provider. Test connection → shows success/failure. Restart → settings persist.                                                             │
+│ 3. Chat: Ask "what are my files about?" → relevant files cited. Ask unrelated question → honest "not found". Stream renders smoothly.                                                                 │
+│ 4. Related: Select file → 5 related files with scores. Click related file → navigates.                                                                                                                │
+│ 5. Notifications: Add file → shows type + word count. Recluster → shows movement details.                                                                                                             │
+│ 6. Metrics: Process files → panel shows timing. Values are reasonable (ms range).                                                                                                                     │
+│                                                                                                                                                                                                       │
+│ Full end-to-end: ./start.sh → drop 5 diverse files → watch auto-clustering → search semantically → chat about files → check related files → verify settings persist across restart.                   │
+╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+⏺ I'll implement this sprint plan systematically. Let me start by reading all the key files to understand the current codebase.
+
+⏺ Now let me read all the key files in parallel to understand the current codebase.
+
+⏺ Read 6 files (ctrl+o to expand)
+
+⏺ Now let me read the frontend files in parallel.
+
+⏺ Read 4 files (ctrl+o to expand)
+
+⏺ Let me read the remaining frontend files and the Tauri files.
+
+⏺ Read 8 files (ctrl+o to expand)
+
+⏺ Now I have a complete picture of the codebase. Let me start implementing Phase 1. I'll work through this efficiently by doing parallel edits where possible.
+
+⏺ Let me start with the backend fixes (Phase 1.1-1.4) in parallel with frontend fixes.
+
+  Phase 1.1: Pipeline Race Conditions - ReclusterScheduler in main.py
+
+⏺ Update(backend/app/main.py)
+  ⎿  Added 32 lines
+      28  )
+      29  logger = logging.getLogger("sefs.main")
+      30
+      31 +
+      32 +# ─── Recluster Scheduler ─────────────────────────────────────
+      33 +
+      34 +class ReclusterScheduler:
+      35 +    """Debounces rapid recluster requests and ensures only one runs at a time."""
+      36 +
+      37 +    def __init__(self, delay: float = 2.0):
+      38 +        self._delay = delay
+      39 +        self._lock = asyncio.Lock()
+      40 +        self._pending = False
+      41 +        self._timer_task: asyncio.Task | None = None
+      42 +
+      43 +    async def request(self):
+      44 +        """Request a recluster. Debounces by self._delay seconds."""
+      45 +        self._pending = True
+      46 +        if self._timer_task and not self._timer_task.done():
+      47 +            self._timer_task.cancel()
+      48 +        self._timer_task = asyncio.create_task(self._run_after_delay())
+      49 +
+      50 +    async def _run_after_delay(self):
+      51 +        await asyncio.sleep(self._delay)
+      52 +        await self._execute()
+      53 +
+      54 +    async def _execute(self):
+      55 +        async with self._lock:
+      56 +            while self._pending:
+      57 +                self._pending = False
+      58 +                await pipeline.run_clustering()
+      59 +
+      60 +
+      61 +recluster_scheduler = ReclusterScheduler()
+      62 +
+      63  # ─── WebSocket Manager ────────────────────────────────────────
+      64
+      65
+
+⏺ Now replace the old on_file_change/on_file_delete and lifecycle:
+
+⏺ Update(backend/app/main.py)
+  ⎿  Added 29 lines, removed 13 lines
+       92
+       93  # ─── Lifecycle ─────────────────────────────────────────────────
+       94
+       95 -_recluster_lock = asyncio.Lock()
+       96 -_recluster_scheduled = False
+       95
+       98 -
+       96  async def on_file_change(path: Path):
+       97      """Called by watcher when a file is created or modified."""
+      101 -    global _recluster_scheduled
+       98      result = await pipeline.process_file(path)
+      103 -    if result and not _recluster_scheduled:
+      104 -        _recluster_scheduled = True
+      105 -        # Delay reclustering to batch rapid changes
+      106 -        await asyncio.sleep(2)
+      107 -        _recluster_scheduled = False
+      108 -        async with _recluster_lock:
+      109 -            await pipeline.run_clustering()
+       99 +    if result:
+      100 +        await recluster_scheduler.request()
+      101
+      102
+      103  async def on_file_delete(path: Path):
+      104      """Called by watcher when a file is deleted."""
+      105      await pipeline.remove_file(path)
+      115 -    async with _recluster_lock:
+      116 -        await pipeline.run_clustering()
+      106 +    await recluster_scheduler.request()
+      107
+      108
+      109 +async def _startup_health_check():
+      110 +    """Verify at least one embedding provider is reachable."""
+      111 +    import httpx
+      112 +
+      113 +    # Check Ollama
+      114 +    try:
+      115 +        async with httpx.AsyncClient(timeout=5.0) as client:
+      116 +            resp = await client.get(f"{settings.ollama_host}/api/tags")
+      117 +            if resp.status_code == 200:
+      118 +                logger.info("Ollama is reachable")
+      119 +                return
+      120 +    except Exception:
+      121 +        logger.warning("Ollama is not reachable")
+      122 +
+      123 +    # Check OpenAI
+      124 +    if settings.openai_api_key:
+      125 +        logger.info("OpenAI API key configured as fallback")
+      126 +    else:
+      127 +        logger.warning(
+      128 +            "Neither Ollama nor OpenAI is available — embeddings will fail"
+      129 +        )
+      130 +
+      131 +
+      132  @asynccontextmanager
+      133  async def lifespan(app: FastAPI):
+      134      # Startup
+     ...
+      138      # Set broadcast function for pipeline
+      139      pipeline.set_broadcast(manager.broadcast)
+      140
+      141 +    # Health check
+      142 +    await _startup_health_check()
+      143 +
+      144      # Start file watcher
+      145      loop = asyncio.get_event_loop()
+      146      watcher.start(loop, on_file_change, on_file_delete)
+
+⏺ Phase 1.3: API Robustness — clamp limits, timeout on search, WS error handling
+
+⏺ Update(backend/app/main.py)
+  ⎿  Added 1 line
+      207
+      208  @app.get("/api/events")
+      209  async def get_events(limit: int = 50):
+      210 +    limit = max(1, min(limit, 200))
+      211      return await db.get_recent_events(limit)
+      212
+      213
+
+⏺ Update(backend/app/main.py)
+  ⎿  Added 7 lines, removed 1 line
+      214  @app.get("/api/search")
+      215  async def semantic_search(q: str, limit: int = 10):
+      216      """Semantic search over files using cosine similarity of embeddings."""
+      217 +    limit = max(1, min(limit, 50))
+      218      if not q or not q.strip():
+      219          return []
+      220
+     ...
+      230      if target_dim is None:
+      231          return []
+      232
+      232 -    query_emb = await get_embedding_matching_dim(q.strip(), target_dim)
+      233 +    try:
+      234 +        query_emb = await asyncio.wait_for(
+      235 +            get_embedding_matching_dim(q.strip(), target_dim), timeout=15.0
+      236 +        )
+      237 +    except asyncio.TimeoutError:
+      238 +        raise HTTPException(504, "Embedding generation timed out")
+      239
+      240      scored = []
+      241      for f in files:
+
+⏺ Now fix the WebSocket handler:
+
+⏺ Update(backend/app/main.py)
+  ⎿  Added 4 lines, removed 1 line
+      389      try:
+      390          while True:
+      391              data = await ws.receive_text()
+      392 -            # Handle incoming messages (e.g., force rescan)
+      392              try:
+      393                  msg = json.loads(data)
+      394                  if msg.get("type") == "rescan":
+     ...
+      398              except json.JSONDecodeError:
+      399                  pass
+      400      except WebSocketDisconnect:
+      401 +        pass
+      402 +    except Exception as e:
+      403 +        logger.warning(f"WebSocket error: {e}")
+      404 +    finally:
+      405          manager.disconnect(ws)
+      406
+      407
+
+⏺ Phase 1.2: Fix EMBED_DIM race condition in embedder.py
+
+⏺ Update(backend/app/embedder.py)
+  ⎿  Added 3 lines, removed 1 line
+       4  """
+       5
+       6  from __future__ import annotations
+       7 +import asyncio
+       8  import logging
+       9  import numpy as np
+      10  from typing import Optional
+     ...
+      14  logger = logging.getLogger("sefs.embedder")
+      15
+      16  _ollama_available: Optional[bool] = None
+      16 -EMBED_DIM: int = 768  # default, updated after first call
+      17 +_embed_dim: int = 768  # default, updated after first call
+      18 +_embed_dim_lock = asyncio.Lock()
+      19
+      20  MAX_CHARS = (
+      21      20000  # ~5000 tokens, safely under 8192 token limits for both Ollama and OpenAI
+
+⏺ Now update the get_embedding function and both _embed_* functions to use the lock:
+
+⏺ Update(backend/app/embedder.py)
+  ⎿  Added 6 lines, removed 2 lines
+      27      global _ollama_available
+      28
+      29      if not text or not text.strip():
+      30 -        return np.zeros(EMBED_DIM, dtype=np.float32)
+      30 +        async with _embed_dim_lock:
+      31 +            dim = _embed_dim
+      32 +        return np.zeros(dim, dtype=np.float32)
+      33
+      34      # Truncate very long texts
+      35      if len(text) > MAX_CHARS:
+     ...
+      52          return await _embed_openai(text)
+      53      except Exception as e:
+      54          logger.error(f"OpenAI embedding also failed: {e}")
+      53 -        return np.zeros(EMBED_DIM, dtype=np.float32)
+      55 +        async with _embed_dim_lock:
+      56 +            dim = _embed_dim
+      57 +        return np.zeros(dim, dtype=np.float32)
+      58
+      59
+      60  async def get_embedding_matching_dim(text: str, target_dim: int) -> np.ndarray:
+
+⏺ Update(backend/app/embedder.py)
+  ⎿  Added 6 lines, removed 4 lines
+      93
+      94
+      95  async def _embed_ollama(text: str) -> np.ndarray:
+      96 -    global EMBED_DIM
+      96 +    global _embed_dim
+      97      import ollama as ol
+      98
+      99      response = ol.embed(
+     ...
+      111          vec = response.get("embedding", response)
+      112
+      113      arr = np.array(vec, dtype=np.float32)
+      114 -    EMBED_DIM = len(arr)
+      114 +    async with _embed_dim_lock:
+      115 +        _embed_dim = len(arr)
+      116      return arr
+      117
+      118
+      119  async def _embed_openai(text: str) -> np.ndarray:
+      119 -    global EMBED_DIM
+      120 +    global _embed_dim
+      121      from openai import AsyncOpenAI
+      122
+      123      client = AsyncOpenAI(api_key=settings.openai_api_key)
+     ...
+      127      )
+      128      vec = response.data[0].embedding
+      129      arr = np.array(vec, dtype=np.float32)
+      129 -    EMBED_DIM = len(arr)
+      130 +    async with _embed_dim_lock:
+      131 +        _embed_dim = len(arr)
+      132      return arr
+      133
+      134
+
+⏺ Phase 1.4: Watcher Debounce Fix — single-task debounce
+
+⏺ Write(backend/app/watcher.py)
+  ⎿  Added 18 lines, removed 21 lines
+      1  """
+      2  SEFS File Watcher — monitors root folder for file changes using watchdog.
+      3 +Uses a single-task debounce: collects pending paths, resets timer on each event,
+      4 +flushes all pending in one batch when timer fires.
+      5  """
+      6
+      7  from __future__ import annotations
+     ...
+      31
+      32
+      33  class SEFSEventHandler(FileSystemEventHandler):
+      32 -    """Handles filesystem events with debouncing and sync-lock awareness."""
+      34 +    """Handles filesystem events with single-task debounce and sync-lock awareness."""
+      35
+      36      def __init__(
+      37          self, loop: asyncio.AbstractEventLoop, on_change: Callable, on_delete: Callable
+     ...
+      40          self._loop = loop
+      41          self._on_change = on_change
+      42          self._on_delete = on_delete
+      41 -        self._pending: dict[str, float] = {}
+      42 -        self._debounce_task: asyncio.Task | None = None
+      43 +        self._pending_changes: dict[str, str] = {}  # path -> action
+      44 +        self._flush_task: asyncio.Task | None = None
+      45
+      46      def _should_ignore(self, path: str) -> bool:
+      47          p = Path(path)
+     ...
+       83              self._schedule(event.dest_path, "change")
+       84
+       85      def _schedule(self, path: str, action: str):
+       84 -        key = f"{action}:{path}"
+       85 -        self._pending[key] = time.time()
+       86 -        # Schedule debounced processing
+       87 -        asyncio.run_coroutine_threadsafe(self._process_pending(), self._loop)
+       86 +        self._pending_changes[path] = action
+       87 +        # Cancel existing timer and reset
+       88 +        if self._flush_task and not self._flush_task.done():
+       89 +            self._flush_task.cancel()
+       90 +        self._flush_task = asyncio.run_coroutine_threadsafe(
+       91 +            self._debounce_flush(), self._loop
+       92 +        )
+       93
+       89 -    async def _process_pending(self):
+       94 +    async def _debounce_flush(self):
+       95 +        """Wait for debounce window, then flush all pending paths in one batch."""
+       96          await asyncio.sleep(DEBOUNCE_SECONDS)
+       91 -        now = time.time()
+       92 -        to_process = []
+       93 -        remaining = {}
+       97 +        # Snapshot and clear pending
+       98 +        batch = dict(self._pending_changes)
+       99 +        self._pending_changes.clear()
+      100
+       95 -        for key, ts in self._pending.items():
+       96 -            if now - ts >= DEBOUNCE_SECONDS:
+       97 -                to_process.append(key)
+       98 -            else:
+       99 -                remaining[key] = ts
+      100 -
+      101 -        self._pending = remaining
+      102 -
+      103 -        for key in to_process:
+      104 -            action, path = key.split(":", 1)
+      101 +        for path, action in batch.items():
+      102              try:
+      103                  if action == "change":
+      104                      await self._on_change(Path(path))
+
+⏺ Phase 1.1 continued: FileNotFoundError guards in pipeline.py
+
+⏺ Update(backend/app/pipeline.py)
+  ⎿  Added 10 lines, removed 8 lines
+      208              continue
+      209          mask = labels == cid
+      210          cluster_file_indices = np.where(mask)[0]
+      211 -        cluster_texts = [
+      212 -            (
+      213 -                extractor.extract(Path(valid_files[i].original_path)).text[:500]
+      214 -                if Path(valid_files[i].original_path).exists()
+      215 -                else valid_files[i].summary
+      216 -            )
+      217 -            for i in cluster_file_indices[:5]
+      218 -        ]
+      211 +        cluster_texts = []
+      212 +        for i in cluster_file_indices[:5]:
+      213 +            try:
+      214 +                src = Path(valid_files[i].original_path)
+      215 +                if src.exists() and extractor.is_supported(src):
+      216 +                    cluster_texts.append(extractor.extract(src).text[:500])
+      217 +                else:
+      218 +                    cluster_texts.append(valid_files[i].summary or valid_files[i].filename)
+      219 +            except (FileNotFoundError, OSError):
+      220 +                cluster_texts.append(valid_files[i].summary or valid_files[i].filename)
+      221
+      222          name = await namer.generate_cluster_name(
+      223              cluster_texts, list(cluster_names.values())
+
+⏺ Also wrap the re-embedding file access in run_clustering:
+
+⏺ Update(backend/app/pipeline.py)
+  ⎿  Added 2 lines
+      154                                  f"Re-embedded {f.filename} ({dims[i]}->{target_dim})"
+      155                              )
+      156                              continue
+      157 +                except (FileNotFoundError, OSError) as e:
+      158 +                    logger.warning(f"File gone during re-embed for {f.filename}: {e}")
+      159                  except Exception as e:
+      160                      logger.warning(f"Re-embedding failed for {f.filename}: {e}")
+      161
+
+⏺ Now let me do the frontend fixes. Phase 1.5: Toast component, 1.6: Loading states, 1.7: WebSocket backoff, 1.8: Electron cleanup
+
+⏺ Write(frontend/src/components/Toast.tsx)
+  ⎿  Wrote 69 lines to frontend/src/components/Toast.tsx
+      1 import { motion, AnimatePresence } from "framer-motion";
+      2 import { X, CheckCircle, AlertTriangle, Info } from "lucide-react";
+      3 import { useEffect } from "react";
+      4
+      5 export interface ToastMessage {
+      6   id: string;
+      7   type: "success" | "error" | "info";
+      8   message: string;
+      9 }
+     … +59 lines (ctrl+o to expand)
+
+⏺ Phase 1.7: WebSocket exponential backoff
+
+⏺ Write(frontend/src/hooks/useWebSocket.ts)
+  ⎿  Added 22 lines, removed 5 lines
+       1 -/* ─── WebSocket hook for real-time updates ─── */
+       1 +/* ─── WebSocket hook with exponential backoff reconnection ─── */
+       2  import { useEffect, useRef, useState, useCallback } from "react";
+       3  import { WSEvent } from "../types";
+       4
+       5  const WS_URL = `ws://${window.location.hostname}:8484/ws`;
+       6 -const RECONNECT_DELAY = 2000;
+       6
+       7 +const BACKOFF_BASE = 1000;
+       8 +const BACKOFF_MAX = 30000;
+       9 +const BACKOFF_MULTIPLIER = 2;
+      10 +
+      11  export function useWebSocket(onEvent: (event: WSEvent) => void) {
+      12    const [connected, setConnected] = useState(false);
+      13    const wsRef = useRef<WebSocket | null>(null);
+      14    const reconnectTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+      15 +  const retryCount = useRef(0);
+      16    const onEventRef = useRef(onEvent);
+      17    onEventRef.current = onEvent;
+      18
+     ...
+      23
+      24        ws.onopen = () => {
+      25          setConnected(true);
+      26 +        retryCount.current = 0;
+      27          console.log("[WS] Connected");
+      28        };
+      29
+     ...
+      38
+      39        ws.onclose = () => {
+      40          setConnected(false);
+      36 -        console.log("[WS] Disconnected, reconnecting...");
+      37 -        reconnectTimer.current = setTimeout(connect, RECONNECT_DELAY);
+      41 +        const delay = Math.min(
+      42 +          BACKOFF_BASE * Math.pow(BACKOFF_MULTIPLIER, retryCount.current),
+      43 +          BACKOFF_MAX,
+      44 +        );
+      45 +        retryCount.current++;
+      46 +        console.log(
+      47 +          `[WS] Disconnected, reconnecting in ${Math.round(delay / 1000)}s...`,
+      48 +        );
+      49 +        reconnectTimer.current = setTimeout(connect, delay);
+      50        };
+      51
+      52        ws.onerror = () => {
+      53          ws.close();
+      54        };
+      55      } catch {
+      44 -      reconnectTimer.current = setTimeout(connect, RECONNECT_DELAY);
+      56 +      const delay = Math.min(
+      57 +        BACKOFF_BASE * Math.pow(BACKOFF_MULTIPLIER, retryCount.current),
+      58 +        BACKOFF_MAX,
+      59 +      );
+      60 +      retryCount.current++;
+      61 +      reconnectTimer.current = setTimeout(connect, delay);
+      62      }
+      63    }, []);
+      64
+
+⏺ Phase 1.8: Clean up Electron artifacts from package.json
+
+⏺ Update(frontend/package.json)
+  ⎿  Added 2 lines, removed 17 lines
+       9      "build": "tsc -b && vite build",
+      10      "preview": "vite preview",
+      11      "tauri:dev": "npx @tauri-apps/cli dev",
+      12 -    "tauri:build": "npx @tauri-apps/cli build",
+      13 -    "electron:dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
+      14 -    "electron:build": "vite build && electron-builder"
+      12 +    "tauri:build": "npx @tauri-apps/cli build"
+      13    },
+      14    "dependencies": {
+      15      "@tailwindcss/vite": "^4.1.18",
+     ...
+      21      "react-force-graph-2d": "^1.29.1",
+      22      "tailwindcss": "^4.1.18"
+      23    },
+      26 -  "main": "electron/main.cjs",
+      27 -  "build": {
+      28 -    "appId": "com.sefs.app",
+      29 -    "productName": "SEFS",
+      30 -    "files": [
+      31 -      "dist/**/*",
+      32 -      "electron/**/*"
+      33 -    ]
+      34 -  },
+      24    "devDependencies": {
+      25      "@types/d3": "^7.4.3",
+      26      "@types/react": "^19.2.13",
+      27      "@types/react-dom": "^19.2.3",
+      28      "@vitejs/plugin-react": "^5.1.4",
+      40 -    "concurrently": "^9.2.1",
+      41 -    "electron": "^40.3.0",
+      42 -    "electron-builder": "^26.7.0",
+      29      "typescript": "^5.9.3",
+      44 -    "vite": "^7.3.1",
+      45 -    "wait-on": "^9.0.3"
+      30 +    "vite": "^7.3.1"
+      31    }
+      32  }
+
+⏺ Phase 1.9: Tauri Backend Spawning — fallback + health check
+
+⏺ Write(frontend/src-tauri/src/lib.rs)
+  ⎿  Added 60 lines, removed 14 lines
+       4
+       5  struct BackendProcess(Mutex<Option<std::process::Child>>);
+       6
+       7 +fn spawn_backend(backend_path: &std::path::Path) -> Option<std::process::Child> {
+       8 +    // Try uv first
+       9 +    match Command::new("uv")
+      10 +        .args(["run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8484"])
+      11 +        .current_dir(backend_path)
+      12 +        .spawn()
+      13 +    {
+      14 +        Ok(child) => {
+      15 +            log::info!("Backend started via uv (PID: {})", child.id());
+      16 +            return Some(child);
+      17 +        }
+      18 +        Err(e) => {
+      19 +            log::warn!("uv not found or failed: {}. Trying python3...", e);
+      20 +        }
+      21 +    }
+      22 +
+      23 +    // Fallback to python3
+      24 +    match Command::new("python3")
+      25 +        .args(["-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8484"])
+      26 +        .current_dir(backend_path)
+      27 +        .spawn()
+      28 +    {
+      29 +        Ok(child) => {
+      30 +            log::info!("Backend started via python3 (PID: {})", child.id());
+      31 +            Some(child)
+      32 +        }
+      33 +        Err(e) => {
+      34 +            log::warn!("python3 also failed: {}. Run backend manually.", e);
+      35 +            None
+      36 +        }
+      37 +    }
+      38 +}
+      39 +
+      40 +fn wait_for_backend_ready() {
+      41 +    let url = "http://localhost:8484/api/status";
+      42 +    let client = reqwest::blocking::Client::builder()
+      43 +        .timeout(std::time::Duration::from_secs(2))
+      44 +        .build()
+      45 +        .unwrap();
+      46 +
+      47 +    for i in 0..30 {
+      48 +        match client.get(url).send() {
+      49 +            Ok(resp) if resp.status().is_success() => {
+      50 +                log::info!("Backend ready after {}s", i);
+      51 +                return;
+      52 +            }
+      53 +            _ => {
+      54 +                std::thread::sleep(std::time::Duration::from_secs(1));
+      55 +            }
+      56 +        }
+      57 +    }
+      58 +    log::warn!("Backend did not become ready within 30s");
+      59 +}
+      60 +
+      61  #[cfg_attr(mobile, tauri::mobile_entry_point)]
+      62  pub fn run() {
+      63      tauri::Builder::default()
+     ...
+       93
+       94              log::info!("Starting backend from: {:?}", backend_path);
+       95
+       42 -            let child = Command::new("uv")
+       43 -                .args(["run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8484"])
+       44 -                .current_dir(&backend_path)
+       45 -                .spawn();
+       96 +            let child = spawn_backend(&backend_path);
+       97 +            app.manage(BackendProcess(Mutex::new(child)));
+       98
+       47 -            match child {
+       48 -                Ok(process) => {
+       49 -                    log::info!("Backend server started (PID: {})", process.id());
+       50 -                    app.manage(BackendProcess(Mutex::new(Some(process))));
+       51 -                }
+       52 -                Err(e) => {
+       53 -                    log::warn!("Could not start backend: {}. Make sure it's running separately.", e);
+       54 -                    app.manage(BackendProcess(Mutex::new(None)));
+       55 -                }
+       56 -            }
+       99 +            // Poll for backend readiness in a background thread
+      100 +            std::thread::spawn(|| {
+      101 +                wait_for_backend_ready();
+      102 +            });
+      103
+      104              Ok(())
+      105          })
+
+⏺ Add reqwest to Cargo.toml:
+
+⏺ Update(frontend/src-tauri/Cargo.toml)
+  ⎿  Added 1 line
+      25  tauri-plugin-log = "2"
+      26  tauri-plugin-shell = "2"
+      27  tauri-plugin-process = "2"
+      28 +reqwest = { version = "0.12", features = ["blocking"] }
+
+⏺ Now let me update Phase 1.5/1.6: App.tsx with Toast, loading states, and empty state. I'll also prepare for all later phases (settings, chat, metrics buttons) in a single rewrite of App.tsx:
+
+⏺ Update(frontend/src/views/GraphView.tsx)
+  ⎿  Added 23 lines, removed 2 lines
+      410          </>
+      411        )}
+      412        {(!data || graphData.nodes.length === 0) && (
+      413 -        <div className="absolute inset-0 flex items-center justify-center text-text-tertiary text-sm">
+      414 -          No files to display. Drop files into the watched folder.
+      413 +        <div className="absolute inset-0 flex flex-col items-center justify-center text-text-tertiary text-sm gap-3">
+      414 +          <div className="w-16 h-16 rounded-2xl bg-bg-dark flex items-center justify-center mb-2">
+      415 +            <svg
+      416 +              width="32"
+      417 +              height="32"
+      418 +              viewBox="0 0 24 24"
+      419 +              fill="none"
+      420 +              stroke="currentColor"
+      421 +              strokeWidth="1.5"
+      422 +              className="text-text-tertiary"
+      423 +            >
+      424 +              <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
+      425 +              <polyline points="13 2 13 9 20 9" />
+      426 +            </svg>
+      427 +          </div>
+      428 +          <p className="font-medium text-text-secondary">
+      429 +            No files yet
+      430 +          </p>
+      431 +          <p className="text-xs text-center max-w-xs leading-relaxed">
+      432 +            Drop files into the watched folder to get started.
+      433 +            <br />
+      434 +            Supported: PDF, TXT, MD, DOCX, CSV, RST
+      435 +          </p>
+      436          </div>
+      437        )}
+      438      </div>
+
+⏺ Now I need to update App.tsx with toast integration, loading state, and prepare for phases 2-6 (settings, chat, metrics buttons). Let me write the full updated App.tsx:
+
+⏺ Write(frontend/src/App.tsx)
+  ⎿  Added 159 lines, removed 55 lines
+      13    Moon,
+      14    X,
+      15    Sparkles,
+      16 +  Settings,
+      17 +  MessageSquare,
+      18  } from "lucide-react";
+      19  import {
+      20    GraphData,
+     ...
+      38  import { SpatialView } from "./views/SpatialView";
+      39  import { Sidebar } from "./components/Sidebar";
+      40  import { EventFeed } from "./components/EventFeed";
+      41 +import { ToastContainer, ToastMessage } from "./components/Toast";
+      42 +import { SettingsModal } from "./components/SettingsModal";
+      43 +import { ChatPanel } from "./components/ChatPanel";
+      44 +import { MetricsPanel } from "./components/MetricsPanel";
+      45
+      46 +let toastId = 0;
+      47 +
+      48  export default function App() {
+      49    const [graphData, setGraphData] = useState<GraphData | null>(null);
+      50    const [viewMode, setViewMode] = useState<ViewMode>("graph");
+     ...
+      57    const searchInputRef = useRef<HTMLInputElement>(null);
+      58    const searchDebounce = useRef<ReturnType<typeof setTimeout>>(undefined);
+      59    const [status, setStatus] = useState({
+      60 +    root_folder: "",
+      61      file_count: 0,
+      62      cluster_count: 0,
+      63      status: "connecting",
+      64    });
+      65    const [isReclustering, setIsReclustering] = useState(false);
+      66 +  const [isLoading, setIsLoading] = useState(true);
+      67    const [liveEvents, setLiveEvents] = useState<WSEvent[]>([]);
+      68    const refreshTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+      69    const { isDark, toggleTheme } = useTheme();
+      70
+      71 +  // Toast state
+      72 +  const [toasts, setToasts] = useState<ToastMessage[]>([]);
+      73 +  const addToast = useCallback(
+      74 +    (type: ToastMessage["type"], message: string) => {
+      75 +      const id = String(++toastId);
+      76 +      setToasts((prev) => [...prev.slice(-4), { id, type, message }]);
+      77 +    },
+      78 +    [],
+      79 +  );
+      80 +  const dismissToast = useCallback((id: string) => {
+      81 +    setToasts((prev) => prev.filter((t) => t.id !== id));
+      82 +  }, []);
+      83 +
+      84 +  // Settings modal
+      85 +  const [settingsOpen, setSettingsOpen] = useState(false);
+      86 +
+      87 +  // Chat panel
+      88 +  const [chatOpen, setChatOpen] = useState(false);
+      89 +
+      90    const fetchData = useCallback(async () => {
+      91      try {
+      92        const [graph, st, ev] = await Promise.all([
+     ...
+       98        setStatus(st);
+       99        setEvents(ev);
+      100      } catch (e) {
+       72 -      console.warn("Fetch failed:", e);
+      101 +      addToast("error", "Failed to connect to backend");
+      102 +    } finally {
+      103 +      setIsLoading(false);
+      104      }
+       74 -  }, []);
+      105 +  }, [addToast]);
+      106
+      107    const handleWSEvent = useCallback(
+      108      (event: WSEvent) => {
+     ...
+      138
+      139    const handleRescan = async () => {
+      140      setIsReclustering(true);
+      110 -    await rescan();
+      141 +    try {
+      142 +      await rescan();
+      143 +    } catch {
+      144 +      addToast("error", "Rescan failed");
+      145 +      setIsReclustering(false);
+      146 +    }
+      147    };
+      148
+      149    // Semantic search with debounce
+      114 -  const handleSearchChange = useCallback((value: string) => {
+      115 -    setSearchQuery(value);
+      116 -    clearTimeout(searchDebounce.current);
+      117 -    if (!value.trim()) {
+      118 -      setSearchResults([]);
+      119 -      setIsSearching(false);
+      120 -      return;
+      121 -    }
+      122 -    setIsSearching(true);
+      123 -    searchDebounce.current = setTimeout(async () => {
+      124 -      try {
+      125 -        const results = await semanticSearch(value.trim());
+      126 -        setSearchResults(results);
+      127 -      } catch (e) {
+      128 -        console.warn("Search failed:", e);
+      129 -      } finally {
+      150 +  const handleSearchChange = useCallback(
+      151 +    (value: string) => {
+      152 +      setSearchQuery(value);
+      153 +      clearTimeout(searchDebounce.current);
+      154 +      if (!value.trim()) {
+      155 +        setSearchResults([]);
+      156          setIsSearching(false);
+      157 +        return;
+      158        }
+      132 -    }, 400);
+      133 -  }, []);
+      159 +      setIsSearching(true);
+      160 +      searchDebounce.current = setTimeout(async () => {
+      161 +        try {
+      162 +          const results = await semanticSearch(value.trim());
+      163 +          setSearchResults(results);
+      164 +        } catch (e) {
+      165 +          addToast("error", "Search failed");
+      166 +        } finally {
+      167 +          setIsSearching(false);
+      168 +        }
+      169 +      }, 400);
+      170 +    },
+      171 +    [addToast],
+      172 +  );
+      173
+      174    const openSearchOverlay = useCallback(() => {
+      175      setSearchOpen(true);
+     ...
+      182      setSearchResults([]);
+      183    }, []);
+      184
+      185 +  const handleSelectNode = useCallback((node: GraphNode) => {
+      186 +    setSelectedNode(node);
+      187 +  }, []);
+      188 +
+      189    return (
+      190      <div className="flex flex-col h-screen bg-bg-main text-text-primary">
+      191        {/* Top Bar */}
+     ...
+      202                alt="SEFS"
+      203                className="w-8 h-8 rounded-lg shadow-sm"
+      204              />
+      162 -            {/* <span className="font-semibold text-[15px] tracking-tight text-text-primary">
+      163 -              SEFS
+      164 -            </span> */}
+      205            </div>
+      206
+      207            {/* View Toggle */}
+     ...
+      290              {isDark ? <Sun size={16} /> : <Moon size={16} />}
+      291            </button>
+      292
+      293 +          <button
+      294 +            onClick={() => setSettingsOpen(true)}
+      295 +            className="w-9 h-9 flex items-center justify-center rounded-lg text-text-secondary cursor-pointer border-none hover:text-text-primary"
+      296 +            style={{ background: "var(--bg-dark)" }}
+      297 +            title="Settings"
+      298 +          >
+      299 +            <Settings size={16} />
+      300 +          </button>
+      301 +
+      302 +          <button
+      303 +            onClick={() => setChatOpen((o) => !o)}
+      304 +            className={`w-9 h-9 flex items-center justify-center rounded-lg cursor-pointer border-none ${
+      305 +              chatOpen
+      306 +                ? "bg-accent text-white"
+      307 +                : "text-text-secondary hover:text-text-primary"
+      308 +            }`}
+      309 +            style={chatOpen ? {} : { background: "var(--bg-dark)" }}
+      310 +            title="Chat with files"
+      311 +          >
+      312 +            <MessageSquare size={16} />
+      313 +          </button>
+      314 +
+      315            <div
+      316              className={`flex items-center gap-1.5 text-[13px] ${
+      317                connected ? "text-success" : "text-error"
+     ...
+      480        <div className="flex flex-1 overflow-hidden">
+      481          {/* Visualization */}
+      482          <div className="flex-1 relative">
+      483 +          {isLoading && (
+      484 +            <div className="absolute inset-0 flex items-center justify-center z-10">
+      485 +              <div className="flex flex-col items-center gap-3">
+      486 +                <div className="w-8 h-8 border-2 border-accent border-t-transparent rounded-full animate-spin-slow" />
+      487 +                <span className="text-sm text-text-tertiary">
+      488 +                  Loading files...
+      489 +                </span>
+      490 +              </div>
+      491 +            </div>
+      492 +          )}
+      493 +
+      494            {isReclustering && (
+      495              <motion.div
+      496                initial={{ opacity: 0, y: -10 }}
+     ...
+      503              </motion.div>
+      504            )}
+      505
+      433 -          <AnimatePresence mode="wait">
+      434 -            {viewMode === "graph" ? (
+      435 -              <motion.div
+      436 -                key="graph"
+      437 -                initial={{ opacity: 0 }}
+      438 -                animate={{ opacity: 1 }}
+      439 -                exit={{ opacity: 0 }}
+      440 -                className="w-full h-full"
+      441 -              >
+      442 -                <GraphView
+      443 -                  data={graphData}
+      444 -                  onNodeClick={setSelectedNode}
+      445 -                  searchQuery={searchQuery}
+      446 -                />
+      447 -              </motion.div>
+      448 -            ) : (
+      449 -              <motion.div
+      450 -                key="spatial"
+      451 -                initial={{ opacity: 0 }}
+      452 -                animate={{ opacity: 1 }}
+      453 -                exit={{ opacity: 0 }}
+      454 -                className="w-full h-full"
+      455 -              >
+      456 -                <SpatialView
+      457 -                  data={graphData}
+      458 -                  onNodeClick={setSelectedNode}
+      459 -                  searchQuery={searchQuery}
+      460 -                />
+      461 -              </motion.div>
+      462 -            )}
+      463 -          </AnimatePresence>
+      506 +          {!isLoading && (
+      507 +            <AnimatePresence mode="wait">
+      508 +              {viewMode === "graph" ? (
+      509 +                <motion.div
+      510 +                  key="graph"
+      511 +                  initial={{ opacity: 0 }}
+      512 +                  animate={{ opacity: 1 }}
+      513 +                  exit={{ opacity: 0 }}
+      514 +                  className="w-full h-full"
+      515 +                >
+      516 +                  <GraphView
+      517 +                    data={graphData}
+      518 +                    onNodeClick={handleSelectNode}
+      519 +                    searchQuery={searchQuery}
+      520 +                  />
+      521 +                </motion.div>
+      522 +              ) : (
+      523 +                <motion.div
+      524 +                  key="spatial"
+      525 +                  initial={{ opacity: 0 }}
+      526 +                  animate={{ opacity: 1 }}
+      527 +                  exit={{ opacity: 0 }}
+      528 +                  className="w-full h-full"
+      529 +                >
+      530 +                  <SpatialView
+      531 +                    data={graphData}
+      532 +                    onNodeClick={handleSelectNode}
+      533 +                    searchQuery={searchQuery}
+      534 +                  />
+      535 +                </motion.div>
+      536 +              )}
+      537 +            </AnimatePresence>
+      538 +          )}
+      539
+      540            {/* Cluster legend */}
+      541            {graphData && graphData.clusters.length > 0 && (
+     ...
+      557                ))}
+      558              </div>
+      559            )}
+      560 +
+      561 +          {/* Metrics Panel */}
+      562 +          <MetricsPanel />
+      563          </div>
+      564
+      565 +        {/* Chat Panel */}
+      566 +        <AnimatePresence>
+      567 +          {chatOpen && (
+      568 +            <ChatPanel
+      569 +              onClose={() => setChatOpen(false)}
+      570 +              onSelectFile={(fileId) => {
+      571 +                const node = graphData?.files.find(
+      572 +                  (f) => f.file_id === fileId,
+      573 +                );
+      574 +                if (node) setSelectedNode(node as GraphNode);
+      575 +              }}
+      576 +            />
+      577 +          )}
+      578 +        </AnimatePresence>
+      579 +
+      580          {/* Sidebar */}
+      581          <Sidebar
+      582            selectedNode={selectedNode}
+      583            onClose={() => setSelectedNode(null)}
+      584 +          onSelectNode={handleSelectNode}
+      585          />
+      586        </div>
+      587
+      588        {/* Bottom Event Feed */}
+      589        <EventFeed events={liveEvents} />
+      590 +
+      591 +      {/* Toast Notifications */}
+      592 +      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
+      593 +
+      594 +      {/* Settings Modal */}
+      595 +      <SettingsModal
+      596 +        open={settingsOpen}
+      597 +        onClose={() => setSettingsOpen(false)}
+      598 +        onToast={addToast}
+      599 +      />
+      600      </div>
+      601    );
+      602  }
+
+⏺ Phase 1 is essentially done. Let me mark it complete and move to Phase 2.
+  ⎿  Found 6 new diagnostic issues in 1 file (ctrl+o to expand)
+
+⏺ Now let me implement Phase 2: Settings. Backend first, then frontend.
+
+  Phase 2.1: Backend settings module + DB table + config update
+
+⏺ Update(backend/app/db.py)
+  ⎿  Added 5 lines
+      55      timestamp TEXT NOT NULL
+      56  );
+      57
+      58 +CREATE TABLE IF NOT EXISTS settings (
+      59 +    key TEXT PRIMARY KEY,
+      60 +    value TEXT
+      61 +);
+      62 +
+      63  CREATE INDEX IF NOT EXISTS idx_files_cluster ON files(cluster_id);
+      64  CREATE INDEX IF NOT EXISTS idx_files_hash ON files(content_hash);
+      65  CREATE INDEX IF NOT EXISTS idx_events_ts ON events(timestamp DESC);
+
+⏺ Now add settings get/set functions to db.py:
+
+⏺ Update(backend/app/db.py)
+  ⎿  Added 41 lines
+      393          await db.commit()
+      394
+      395
+      396 +# ─── Settings operations ─────────────────────────────────────
+      397 +
+      398 +
+      399 +async def get_setting(key: str) -> Optional[str]:
+      400 +    db = await get_db()
+      401 +    cursor = await db.execute("SELECT value FROM settings WHERE key=?", (key,))
+      402 +    row = await cursor.fetchone()
+      403 +    return row["value"] if row else None
+      404 +
+      405 +
+      406 +async def get_all_settings() -> dict[str, str]:
+      407 +    db = await get_db()
+      408 +    cursor = await db.execute("SELECT key, value FROM settings")
+      409 +    rows = await cursor.fetchall()
+      410 +    return {r["key"]: r["value"] for r in rows}
+      411 +
+      412 +
+      413 +async def set_setting(key: str, value: str):
+      414 +    db = await get_db()
+      415 +    async with _lock:
+      416 +        await db.execute(
+      417 +            "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+      418 +            (key, value),
+      419 +        )
+      420 +        await db.commit()
+      421 +
+      422 +
+      423 +async def set_settings_bulk(settings_dict: dict[str, str]):
+      424 +    db = await get_db()
+      425 +    async with _lock:
+      426 +        for key, value in settings_dict.items():
+      427 +            await db.execute(
+      428 +                "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+      429 +                (key, value),
+      430 +            )
+      431 +        await db.commit()
+      432 +
+      433 +
+      434 +# ─── Event operations ─────────────────────────────────────
+      435 +
+      436 +
+      437  async def get_recent_events(limit: int = 50) -> list[dict]:
+      438      db = await get_db()
+      439      cursor = await db.execute(
+
+⏺ Add update_from_dict to config.py:
+
+⏺ Update(backend/app/config.py)
+  ⎿  Added 12 lines
+      24      def root_path(self) -> Path:
+      25          return Path(self.root_folder).expanduser().resolve()
+      26
+      27 +    def update_from_dict(self, data: dict):
+      28 +        """Update runtime settings from a dict (e.g. from saved settings)."""
+      29 +        field_map = {
+      30 +            "ollama_host": "ollama_host",
+      31 +            "ollama_embed_model": "ollama_embed_model",
+      32 +            "ollama_llm_model": "ollama_llm_model",
+      33 +            "openai_api_key": "openai_api_key",
+      34 +        }
+      35 +        for key, attr in field_map.items():
+      36 +            if key in data and data[key]:
+      37 +                object.__setattr__(self, attr, data[key])
+      38 +
+      39      class Config:
+      40          env_file = ".env"
+      41          env_file_encoding = "utf-8"
+
+⏺ Now create the settings module:
+
+⏺ Write(backend/app/settings.py)
+  ⎿  Wrote 95 lines to backend/app/settings.py
+      1 """
+      2 SEFS Settings — runtime configuration persistence and provider testing.
+      3 """
+      4
+      5 from __future__ import annotations
+      6 import logging
+      7
+      8 from app.config import settings
+      9 from app import db
+     … +85 lines (ctrl+o to expand)
+
+⏺ Add settings endpoints to main.py:
+
+⏺ Update(backend/app/main.py)
+  ⎿  Added 1 line
+      21  from app import db, pipeline
+      22  from app.watcher import watcher
+      23  from app.embedder import get_embedding, get_embedding_matching_dim
+      24 +from app import settings as settings_module
+      25
+      26  logging.basicConfig(
+      27      level=logging.INFO,
+
+⏺ Now add settings endpoints. I need to find the right place after the existing endpoints:
+
+⏺ Update(backend/app/main.py)
+  ⎿  Added 18 lines
+      381      return {"nodes": nodes, "links": links, "clusters": [c.to_dict() for c in clusters]}
+      382
+      383
+      384 +# ─── Settings Endpoints ──────────────────────────────────────
+      385 +
+      386 +
+      387 +@app.get("/api/settings")
+      388 +async def api_get_settings():
+      389 +    return await settings_module.get_settings()
+      390 +
+      391 +
+      392 +@app.put("/api/settings")
+      393 +async def api_save_settings(data: dict):
+      394 +    return await settings_module.save_settings(data)
+      395 +
+      396 +
+      397 +@app.post("/api/settings/test")
+      398 +async def api_test_connection(data: dict):
+      399 +    return await settings_module.test_connection(data)
+      400 +
+      401 +
+      402  # ─── WebSocket ─────────────────────────────────────────────────
+      403
+      404
+
+⏺ Phase 2.2: Frontend Settings Modal
+
+⏺ Write(frontend/src/components/SettingsModal.tsx)
+  ⎿  Wrote 274 lines to frontend/src/components/SettingsModal.tsx
+       1 import { useState, useEffect } from "react";
+       2 import { motion, AnimatePresence } from "framer-motion";
+       3 import { X, CheckCircle, AlertTriangle, Loader2 } from "lucide-react";
+       4 import { getSettings, saveSettings, testConnection } from "../api";
+       5
+       6 interface Props {
+       7   open: boolean;
+       8   onClose: () => void;
+       9   onToast: (type: "success" | "error" | "info", message: string) => void;
+      10 }
+     … +264 lines (ctrl+o to expand)
+  ⎿  You've hit your limit · resets Feb 18 at 8:30pm (Asia/Calcutta)
+
+✻ Sautéed for 7m 20s
+
+  6 tasks (1 done, 1 in progress, 4 open)
+  ◼ Phase 2: Settings Page (Model Selection)
+  ◻ Phase 3: AI Chat with Files (RAG)
+  ◻ Phase 4: Relationship Insights
+  ◻ Phase 5: Smart Notifications
+  ◻ Phase 6: Performance Dashboard
+  ✔ Phase 1: Fix All Existing Issues

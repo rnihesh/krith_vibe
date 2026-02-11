@@ -158,7 +158,7 @@ def _assign_noise_smart(labels: np.ndarray, embeddings: np.ndarray) -> np.ndarra
 
     # If ALL are noise, nothing to assign to
     if noise_mask.all():
-        return np.zeros_like(labels)
+        return labels
 
     # Compute cluster centroids in embedding space
     labeled_mask = ~noise_mask

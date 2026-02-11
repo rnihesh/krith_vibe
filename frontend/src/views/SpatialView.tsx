@@ -264,7 +264,7 @@ export function SpatialView({ data, onNodeClick, searchQuery }: Props) {
             {tooltip.file.filename}
           </div>
           <div className="text-text-tertiary mt-0.5">
-            {getFileIcon(tooltip.file.filename)} file
+            {getFileIcon(tooltip.file.file_type || "")} file
           </div>
           {tooltip.file.summary && (
             <div className="text-text-secondary mt-1 leading-relaxed">

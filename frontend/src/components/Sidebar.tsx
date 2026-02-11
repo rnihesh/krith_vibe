@@ -1,21 +1,37 @@
 import { motion, AnimatePresence } from "framer-motion";
-import { X, ExternalLink, FileText, Tag, Clock } from "lucide-react";
+import { X, ExternalLink, FileText, Tag, Clock, Link2 } from "lucide-react";
 import { GraphNode, SEFSFile, getClusterColor, getFileIcon } from "../types";
-import { openFile } from "../api";
-import { useState } from "react";
+import { openFile, getRelatedFiles, RelatedFile } from "../api";
+import { useState, useEffect } from "react";
 
 interface Props {
   selectedNode: GraphNode | null;
   onClose: () => void;
+  onSelectNode?: (node: GraphNode) => void;
 }
 
 function isFile(node: GraphNode): node is SEFSFile {
   return node.type === "file";
 }
 
-export function Sidebar({ selectedNode, onClose }: Props) {
+export function Sidebar({ selectedNode, onClose, onSelectNode }: Props) {
   const [opening, setOpening] = useState(false);
   const [openError, setOpenError] = useState<string | null>(null);
+  const [related, setRelated] = useState<RelatedFile[]>([]);
+  const [loadingRelated, setLoadingRelated] = useState(false);
+
+  // Fetch related files when a file node is selected
+  useEffect(() => {
+    if (selectedNode && isFile(selectedNode) && selectedNode.file_id) {
+      setLoadingRelated(true);
+      getRelatedFiles(selectedNode.file_id, 5)
+        .then(setRelated)
+        .catch(() => setRelated([]))
+        .finally(() => setLoadingRelated(false));
+    } else {
+      setRelated([]);
+    }
+  }, [selectedNode]);
 
   const handleOpen = async () => {
     if (!selectedNode || !isFile(selectedNode)) return;
@@ -160,6 +176,74 @@ export function Sidebar({ selectedNode, onClose }: Props) {
                 <div className="text-xs text-text-secondary bg-bg-dark px-2.5 py-1.5 rounded-md break-all font-mono">
                   {selectedNode.current_path}
                 </div>
+              </div>
+            )}
+
+            {/* ── Related Files ── */}
+            {isFile(selectedNode) && (
+              <div>
+                <div className="flex items-center gap-1.5 mb-2">
+                  <Link2 size={12} className="text-text-tertiary" />
+                  <span className="text-xs text-text-tertiary font-semibold uppercase tracking-wider">
+                    Related Files
+                  </span>
+                </div>
+                {loadingRelated && (
+                  <div className="flex items-center gap-2 py-2">
+                    <div className="w-3 h-3 border border-accent border-t-transparent rounded-full animate-spin-slow" />
+                    <span className="text-xs text-text-tertiary">
+                      Finding related...
+                    </span>
+                  </div>
+                )}
+                {!loadingRelated && related.length === 0 && (
+                  <p className="text-xs text-text-tertiary py-1">
+                    No related files found
+                  </p>
+                )}
+                {!loadingRelated && related.length > 0 && (
+                  <div className="space-y-1">
+                    {related.map((r) => (
+                      <button
+                        key={r.file_id}
+                        onClick={() => {
+                          if (onSelectNode) {
+                            // Construct a minimal GraphNode to navigate
+                            onSelectNode({
+                              id: `file-${r.file_id}`,
+                              file_id: r.file_id,
+                              filename: r.filename,
+                              label: r.filename,
+                              cluster_id: r.cluster_id,
+                              type: "file",
+                              summary: r.summary,
+                            } as any);
+                          }
+                        }}
+                        className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-left cursor-pointer border-none bg-transparent hover:bg-bg-dark transition-colors"
+                      >
+                        <div
+                          className="w-2 h-2 rounded-full shrink-0"
+                          style={{
+                            background: getClusterColor(r.cluster_id),
+                          }}
+                        />
+                        <span className="flex-1 text-xs text-text-primary truncate">
+                          {r.filename}
+                        </span>
+                        <span
+                          className="text-[10px] px-1.5 py-0 rounded font-mono shrink-0"
+                          style={{
+                            background: "var(--accent-light)",
+                            color: "var(--accent)",
+                          }}
+                        >
+                          {(r.similarity * 100).toFixed(0)}%
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </div>

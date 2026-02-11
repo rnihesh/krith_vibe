@@ -13,6 +13,8 @@ import {
   Moon,
   X,
   Sparkles,
+  Settings,
+  MessageSquare,
 } from "lucide-react";
 import {
   GraphData,
@@ -36,6 +38,13 @@ import { GraphView } from "./views/GraphView";
 import { SpatialView } from "./views/SpatialView";
 import { Sidebar } from "./components/Sidebar";
 import { EventFeed } from "./components/EventFeed";
+import { ToastContainer, ToastMessage } from "./components/Toast";
+import { SettingsModal } from "./components/SettingsModal";
+import { ChatPanel } from "./components/ChatPanel";
+import { MetricsPanel } from "./components/MetricsPanel";
+import { notifyDesktop } from "./notifications";
+
+let toastId = 0;
 
 export default function App() {
   const [graphData, setGraphData] = useState<GraphData | null>(null);
@@ -49,14 +58,67 @@ export default function App() {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchDebounce = useRef<ReturnType<typeof setTimeout>>(undefined);
   const [status, setStatus] = useState({
+    root_folder: "",
     file_count: 0,
     cluster_count: 0,
     status: "connecting",
   });
   const [isReclustering, setIsReclustering] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [liveEvents, setLiveEvents] = useState<WSEvent[]>([]);
   const refreshTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const { isDark, toggleTheme } = useTheme();
+
+  // Toast state
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const addToast = useCallback(
+    (type: ToastMessage["type"], message: string) => {
+      const id = String(++toastId);
+      setToasts((prev) => [...prev.slice(-4), { id, type, message }]);
+    },
+    [],
+  );
+  const dismissToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
+  // Settings modal
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // Chat panel
+  const [chatOpen, setChatOpen] = useState(false);
+
+  const notifyForEvent = useCallback((event: WSEvent) => {
+    if (event.type === "file_added" && event.filename) {
+      const details = [
+        event.file_type?.toUpperCase(),
+        event.word_count ? `${event.word_count.toLocaleString()} words` : "",
+      ]
+        .filter(Boolean)
+        .join(" • ");
+      void notifyDesktop(
+        "SEFS: File Added",
+        details ? `${event.filename} (${details})` : event.filename,
+      );
+      return;
+    }
+    if (event.type === "file_removed" && event.filename) {
+      void notifyDesktop("SEFS: File Removed", event.filename);
+      return;
+    }
+    if (event.type === "reclustering_end") {
+      const count = event.cluster_count ?? 0;
+      const moves = event.total_moves ?? 0;
+      if (moves > 0) {
+        const firstCluster = event.clusters?.[0]?.name;
+        const clusterSuffix = firstCluster ? ` e.g. ${firstCluster}` : "";
+        void notifyDesktop(
+          "SEFS: Organization Complete",
+          `Organized into ${count} groups (${moves} files moved)${clusterSuffix}`,
+        );
+      }
+    }
+  }, []);
 
   const fetchData = useCallback(async () => {
     try {
@@ -69,13 +131,16 @@ export default function App() {
       setStatus(st);
       setEvents(ev);
     } catch (e) {
-      console.warn("Fetch failed:", e);
+      addToast("error", "Failed to connect to backend");
+    } finally {
+      setIsLoading(false);
     }
-  }, []);
+  }, [addToast]);
 
   const handleWSEvent = useCallback(
     (event: WSEvent) => {
       setLiveEvents((prev) => [event, ...prev.slice(0, 49)]);
+      notifyForEvent(event);
       switch (event.type) {
         case "reclustering_start":
           setIsReclustering(true);
@@ -94,7 +159,7 @@ export default function App() {
           break;
       }
     },
-    [fetchData],
+    [fetchData, notifyForEvent],
   );
 
   const { connected } = useWebSocket(handleWSEvent);
@@ -107,30 +172,38 @@ export default function App() {
 
   const handleRescan = async () => {
     setIsReclustering(true);
-    await rescan();
+    try {
+      await rescan();
+    } catch {
+      addToast("error", "Rescan failed");
+      setIsReclustering(false);
+    }
   };
 
   // Semantic search with debounce
-  const handleSearchChange = useCallback((value: string) => {
-    setSearchQuery(value);
-    clearTimeout(searchDebounce.current);
-    if (!value.trim()) {
-      setSearchResults([]);
-      setIsSearching(false);
-      return;
-    }
-    setIsSearching(true);
-    searchDebounce.current = setTimeout(async () => {
-      try {
-        const results = await semanticSearch(value.trim());
-        setSearchResults(results);
-      } catch (e) {
-        console.warn("Search failed:", e);
-      } finally {
+  const handleSearchChange = useCallback(
+    (value: string) => {
+      setSearchQuery(value);
+      clearTimeout(searchDebounce.current);
+      if (!value.trim()) {
+        setSearchResults([]);
         setIsSearching(false);
+        return;
       }
-    }, 400);
-  }, []);
+      setIsSearching(true);
+      searchDebounce.current = setTimeout(async () => {
+        try {
+          const results = await semanticSearch(value.trim());
+          setSearchResults(results);
+        } catch (e) {
+          addToast("error", "Search failed");
+        } finally {
+          setIsSearching(false);
+        }
+      }, 400);
+    },
+    [addToast],
+  );
 
   const openSearchOverlay = useCallback(() => {
     setSearchOpen(true);
@@ -142,6 +215,20 @@ export default function App() {
     setSearchQuery("");
     setSearchResults([]);
   }, []);
+
+  const handleSelectNode = useCallback(
+    (node: GraphNode) => {
+      if (node.type === "file") {
+        const full = graphData?.files.find((f) => f.file_id === node.file_id);
+        if (full) {
+          setSelectedNode(full as GraphNode);
+          return;
+        }
+      }
+      setSelectedNode(node);
+    },
+    [graphData],
+  );
 
   return (
     <div className="flex flex-col h-screen bg-bg-main text-text-primary">
@@ -159,9 +246,6 @@ export default function App() {
               alt="SEFS"
               className="w-8 h-8 rounded-lg shadow-sm"
             />
-            {/* <span className="font-semibold text-[15px] tracking-tight text-text-primary">
-              SEFS
-            </span> */}
           </div>
 
           {/* View Toggle */}
@@ -248,6 +332,28 @@ export default function App() {
             title={isDark ? "Switch to light mode" : "Switch to dark mode"}
           >
             {isDark ? <Sun size={16} /> : <Moon size={16} />}
+          </button>
+
+          <button
+            onClick={() => setSettingsOpen(true)}
+            className="w-9 h-9 flex items-center justify-center rounded-lg text-text-secondary cursor-pointer border-none hover:text-text-primary"
+            style={{ background: "var(--bg-dark)" }}
+            title="Settings"
+          >
+            <Settings size={16} />
+          </button>
+
+          <button
+            onClick={() => setChatOpen((o) => !o)}
+            className={`w-9 h-9 flex items-center justify-center rounded-lg cursor-pointer border-none ${
+              chatOpen
+                ? "bg-accent text-white"
+                : "text-text-secondary hover:text-text-primary"
+            }`}
+            style={chatOpen ? {} : { background: "var(--bg-dark)" }}
+            title="Chat with files"
+          >
+            <MessageSquare size={16} />
           </button>
 
           <div
@@ -417,7 +523,18 @@ export default function App() {
       {/* Main Content */}
       <div className="flex flex-1 overflow-hidden">
         {/* Visualization */}
-        <div className="flex-1 relative">
+        <div className="flex-1 min-w-0 relative">
+          {isLoading && (
+            <div className="absolute inset-0 flex items-center justify-center z-10">
+              <div className="flex flex-col items-center gap-3">
+                <div className="w-8 h-8 border-2 border-accent border-t-transparent rounded-full animate-spin-slow" />
+                <span className="text-sm text-text-tertiary">
+                  Loading files...
+                </span>
+              </div>
+            </div>
+          )}
+
           {isReclustering && (
             <motion.div
               initial={{ opacity: 0, y: -10 }}
@@ -430,37 +547,40 @@ export default function App() {
             </motion.div>
           )}
 
-          <AnimatePresence mode="wait">
-            {viewMode === "graph" ? (
-              <motion.div
-                key="graph"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className="w-full h-full"
-              >
-                <GraphView
-                  data={graphData}
-                  onNodeClick={setSelectedNode}
-                  searchQuery={searchQuery}
-                />
-              </motion.div>
-            ) : (
-              <motion.div
-                key="spatial"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className="w-full h-full"
-              >
-                <SpatialView
-                  data={graphData}
-                  onNodeClick={setSelectedNode}
-                  searchQuery={searchQuery}
-                />
-              </motion.div>
-            )}
-          </AnimatePresence>
+          {!isLoading && (
+            <AnimatePresence mode="wait">
+              {viewMode === "graph" ? (
+                <motion.div
+                  key="graph"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="w-full h-full"
+                >
+                  <GraphView
+                    data={graphData}
+                    onNodeClick={handleSelectNode}
+                    searchQuery={searchQuery}
+                    rootFolder={status.root_folder}
+                  />
+                </motion.div>
+              ) : (
+                <motion.div
+                  key="spatial"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="w-full h-full"
+                >
+                  <SpatialView
+                    data={graphData}
+                    onNodeClick={handleSelectNode}
+                    searchQuery={searchQuery}
+                  />
+                </motion.div>
+              )}
+            </AnimatePresence>
+          )}
 
           {/* Cluster legend */}
           {graphData && graphData.clusters.length > 0 && (
@@ -482,17 +602,46 @@ export default function App() {
               ))}
             </div>
           )}
+
+          {/* Metrics Panel */}
+          <MetricsPanel />
         </div>
+
+        {/* Chat Panel */}
+        <AnimatePresence>
+          {chatOpen && (
+            <ChatPanel
+              onClose={() => setChatOpen(false)}
+              onSelectFile={(fileId) => {
+                const node = graphData?.files.find(
+                  (f) => f.file_id === fileId,
+                );
+                if (node) setSelectedNode(node as GraphNode);
+              }}
+            />
+          )}
+        </AnimatePresence>
 
         {/* Sidebar */}
         <Sidebar
           selectedNode={selectedNode}
           onClose={() => setSelectedNode(null)}
+          onSelectNode={handleSelectNode}
         />
       </div>
 
       {/* Bottom Event Feed */}
       <EventFeed events={liveEvents} />
+
+      {/* Toast Notifications */}
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
+
+      {/* Settings Modal */}
+      <SettingsModal
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        onToast={addToast}
+      />
     </div>
   );
 }

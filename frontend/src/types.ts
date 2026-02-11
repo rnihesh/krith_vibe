@@ -63,6 +63,13 @@ export interface WSEvent {
   file_count?: number;
   detail?: string;
   data?: Record<string, any>;
+  // Enriched event data (Phase 5)
+  file_type?: string;
+  word_count?: number;
+  summary?: string;
+  total_moves?: number;
+  moves?: Array<{ file_id: number; from: string; to: string }>;
+  clusters?: Array<{ cluster_id: number; name: string; file_count: number }>;
 }
 
 export interface EventLog {

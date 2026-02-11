@@ -48,42 +48,50 @@ Document excerpts:
 
 Reply with ONLY the folder name. Nothing else."""
 
-    # Try Ollama
-    try:
-        import ollama as ol
+    provider = settings.selected_provider
+    if provider == "openai":
+        if not settings.openai_api_key:
+            logger.warning("OpenAI provider selected for naming, but API key is empty")
+            return _keyword_name(snippets)
+        try:
+            from openai import AsyncOpenAI
 
-        response = ol.chat(
-            model=settings.ollama_llm_model,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        name = ""
-        if hasattr(response, "message"):
-            name = response.message.content.strip()
-        elif isinstance(response, dict):
-            name = response.get("message", {}).get("content", "").strip()
-        name = _sanitize_name(name)
-        if name and name.lower() != "miscellaneous":
-            return name
-    except Exception as e:
-        logger.warning(f"Ollama naming failed: {e}")
+            client = AsyncOpenAI(api_key=settings.openai_api_key)
+            response = await client.chat.completions.create(
+                model=settings.openai_model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=20,
+                temperature=0.3,
+            )
+            name = (response.choices[0].message.content or "").strip()
+            name = _sanitize_name(name)
+            if name:
+                return name
+        except Exception as e:
+            logger.warning(f"OpenAI naming failed: {e}")
+    else:
+        try:
+            import asyncio
+            import ollama as ol
 
-    # Try OpenAI
-    try:
-        from openai import AsyncOpenAI
-
-        client = AsyncOpenAI(api_key=settings.openai_api_key)
-        response = await client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=20,
-            temperature=0.3,
-        )
-        name = response.choices[0].message.content.strip()
-        name = _sanitize_name(name)
-        if name:
-            return name
-    except Exception as e:
-        logger.warning(f"OpenAI naming failed: {e}")
+            loop = asyncio.get_running_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: ol.chat(
+                    model=settings.ollama_llm_model,
+                    messages=[{"role": "user", "content": prompt}],
+                ),
+            )
+            name = ""
+            if hasattr(response, "message"):
+                name = response.message.content.strip()
+            elif isinstance(response, dict):
+                name = response.get("message", {}).get("content", "").strip()
+            name = _sanitize_name(name)
+            if name and name.lower() != "miscellaneous":
+                return name
+        except Exception as e:
+            logger.warning(f"Ollama naming failed: {e}")
 
     # Fallback: keyword extraction
     return _keyword_name(snippets)

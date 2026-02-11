@@ -36,6 +36,9 @@ A **self-organising file manager** that replaces static folders with a dynamic s
 - **LLM-Powered Names**: Cluster folders get descriptive names via Ollama/OpenAI
 - **Dual Visualization**: Toggle between force-directed graph and UMAP spatial map
 - **Real-Time Updates**: WebSocket-driven live animations for file events
+- **Provider Control**: Switch between Ollama and OpenAI from in-app settings
+- **Desktop Alerts**: Tauri desktop notifications for file/cluster activity
+- **AI Chat + RAG**: Ask questions across your files with source citations
 - **Hover Metadata**: File type, size, word count, summary on hover
 - **Dark Theme**: Glassmorphism panels, glowing nodes, particle effects
 
@@ -70,7 +73,7 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 8484
 cd frontend
 npm install
 npm run dev          # Web mode at http://localhost:5173
-npm run electron:dev # Desktop mode (Electron)
+npm run tauri:dev    # Desktop mode (Tauri)
 ```
 
 ## Configuration
@@ -108,7 +111,7 @@ Edit `backend/.env`:
 | Graph View   | react-force-graph-2d                        |
 | Spatial View | D3.js (Voronoi + UMAP scatter)              |
 | Animations   | Framer Motion                               |
-| Desktop      | Electron                                    |
+| Desktop      | Tauri v2                                    |
 
 ## API Endpoints
 

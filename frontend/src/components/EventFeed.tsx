@@ -41,19 +41,32 @@ function formatTime(ts: string): string {
 }
 
 function eventMessage(event: WSEvent): string {
+  const fname = event.filename || event.data?.filename || "file";
   switch (event.type) {
-    case "file_added":
-      return `Added: ${event.data?.filename || "file"}`;
-    case "file_modified":
-      return `Modified: ${event.data?.filename || "file"}`;
+    case "file_added": {
+      const parts = [`Added: ${fname}`];
+      if (event.file_type) parts.push(event.file_type.toUpperCase());
+      if (event.word_count) parts.push(`${event.word_count.toLocaleString()} words`);
+      return parts.join(" • ");
+    }
+    case "file_modified": {
+      const parts = [`Modified: ${fname}`];
+      if (event.word_count) parts.push(`${event.word_count.toLocaleString()} words`);
+      return parts.join(" • ");
+    }
     case "file_removed":
-      return `Removed: ${event.data?.filename || "file"}`;
+      return `Removed: ${fname}`;
     case "scan_complete":
-      return `Scan complete (${event.data?.total_files || 0} files)`;
+      return `Scan complete (${event.file_count || event.data?.total_files || 0} files)`;
     case "reclustering_start":
-      return "Reclustering started...";
-    case "reclustering_end":
-      return `Reclustered into ${event.data?.cluster_count || 0} groups`;
+      return "Organizing files...";
+    case "reclustering_end": {
+      const count = event.cluster_count || event.data?.cluster_count || 0;
+      const moves = event.total_moves || event.data?.total_moves;
+      return moves
+        ? `Organized into ${count} groups (${moves} files moved)`
+        : `Organized into ${count} groups`;
+    }
     case "error":
       return `Error: ${event.data?.message || "unknown"}`;
     default:
