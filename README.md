@@ -23,6 +23,45 @@ The result: your filesystem organises itself by meaning, not by arbitrary folder
 
 ---
 
+## Screenshots
+
+### Graph View -- Files as nodes, clusters as groups, links by similarity
+
+![Graph View](public/intro-graphs.png)
+
+### Graph View -- Expanded cluster detail with file metadata on hover
+
+![Graph Depth](public/graphs-depth.png)
+
+### Spatial View -- UMAP 2D projection of file embeddings
+
+![Spatial View](public/spatial.png)
+
+### Spatial View -- Zoomed in on a cluster region
+
+![Spatial Depth](public/spatial-depth.png)
+
+### Semantic Search -- Find files by meaning, not keywords
+
+![Semantic Search](public/semantic-search.png)
+
+### RAG Chatbot and File Details
+
+<p>
+<img src="public/rag-chatbot.png" alt="RAG Chatbot" width="49%">
+<img src="public/file-details.png" alt="File Details" width="49%">
+</p>
+
+### Desktop Notifications -- Real-time alerts for file and cluster events
+
+![Notifications](public/noti.png)
+
+### Settings Panel -- Switch providers, models, and root folder
+
+![Settings](public/settings.png)
+
+---
+
 ## Architecture
 
 ```
