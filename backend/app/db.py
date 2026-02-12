@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS files (
     current_path TEXT NOT NULL,
     content_hash TEXT NOT NULL,
     embedding BLOB,
+    embed_model TEXT DEFAULT '',
     umap_x REAL DEFAULT 0.0,
     umap_y REAL DEFAULT 0.0,
     cluster_id INTEGER DEFAULT -1,
@@ -81,6 +82,7 @@ class FileRecord:
     current_path: str = ""
     content_hash: str = ""
     embedding: Optional[np.ndarray] = None
+    embed_model: str = ""
     umap_x: float = 0.0
     umap_y: float = 0.0
     cluster_id: int = -1
@@ -163,6 +165,12 @@ async def init_db(db_path: Path):
     _db.row_factory = aiosqlite.Row
     await _db.executescript(SCHEMA)
     await _db.commit()
+    # Migrate: add embed_model column if missing (existing DBs)
+    try:
+        await _db.execute("ALTER TABLE files ADD COLUMN embed_model TEXT DEFAULT ''")
+        await _db.commit()
+    except Exception:
+        pass  # Column already exists
 
 
 def get_folder_db_path(root: Path) -> Path:
@@ -206,15 +214,16 @@ async def upsert_file(f: FileRecord) -> int:
         await db.execute(
             """INSERT INTO files
                (filename, original_path, current_path, content_hash,
-                embedding, umap_x, umap_y, cluster_id, summary,
+                embedding, embed_model, umap_x, umap_y, cluster_id, summary,
                 file_type, size_bytes, word_count, page_count,
                 created_at, modified_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(original_path) DO UPDATE SET
                 filename=excluded.filename,
                 current_path=excluded.current_path,
                 content_hash=excluded.content_hash,
                 embedding=excluded.embedding,
+                embed_model=excluded.embed_model,
                 umap_x=excluded.umap_x,
                 umap_y=excluded.umap_y,
                 cluster_id=excluded.cluster_id,
@@ -231,6 +240,7 @@ async def upsert_file(f: FileRecord) -> int:
                 f.current_path,
                 f.content_hash,
                 _embed_to_bytes(f.embedding),
+                f.embed_model,
                 f.umap_x,
                 f.umap_y,
                 f.cluster_id,
@@ -325,12 +335,14 @@ async def update_file_umap(file_id: int, x: float, y: float):
         await db.commit()
 
 
-async def update_file_embedding(file_id: int, embedding: np.ndarray):
+async def update_file_embedding(
+    file_id: int, embedding: np.ndarray, embed_model: str = ""
+):
     db = await get_db()
     async with _lock:
         await db.execute(
-            "UPDATE files SET embedding=? WHERE id=?",
-            (_embed_to_bytes(embedding), file_id),
+            "UPDATE files SET embedding=?, embed_model=? WHERE id=?",
+            (_embed_to_bytes(embedding), embed_model, file_id),
         )
         await db.commit()
 
@@ -396,6 +408,7 @@ def _row_to_file(row) -> FileRecord:
         current_path=row["current_path"],
         content_hash=row["content_hash"],
         embedding=_bytes_to_embed(row["embedding"]),
+        embed_model=row["embed_model"] if "embed_model" in row.keys() else "",
         umap_x=row["umap_x"],
         umap_y=row["umap_y"],
         cluster_id=row["cluster_id"],

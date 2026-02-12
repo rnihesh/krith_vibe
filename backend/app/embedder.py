@@ -33,6 +33,21 @@ OPENAI_EMBED_DIMS = {
 }
 
 
+def get_current_model_tag() -> str:
+    """Return a tag identifying the active provider+model, e.g. 'ollama:nomic-embed-text'."""
+    provider = _preferred_provider()
+    if provider == "openai":
+        return f"openai:{settings.openai_embed_model}"
+    return f"ollama:{settings.ollama_embed_model}"
+
+
+def embedding_model_matches(stored_model: str) -> bool:
+    """Check if a stored embed_model tag matches the currently active provider+model."""
+    if not stored_model:
+        return False
+    return stored_model == get_current_model_tag()
+
+
 def reset_runtime_state():
     """Reset runtime health cache after settings/provider changes."""
     _provider_available["ollama"] = None
@@ -168,8 +183,7 @@ async def generate_summary(text: str) -> str:
                     {
                         "role": "user",
                         "content": (
-                            "Summarize this document in 1-2 sentences:\n\n"
-                            f"{snippet}"
+                            "Summarize this document in 1-2 sentences:\n\n" f"{snippet}"
                         ),
                     }
                 ],
@@ -193,8 +207,7 @@ async def generate_summary(text: str) -> str:
                     {
                         "role": "user",
                         "content": (
-                            "Summarize this document in 1-2 sentences:\n\n"
-                            f"{snippet}"
+                            "Summarize this document in 1-2 sentences:\n\n" f"{snippet}"
                         ),
                     }
                 ],

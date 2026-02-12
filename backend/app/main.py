@@ -18,7 +18,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 import numpy as np
 
 from app.config import settings
-from app import db, pipeline, extractor
+from app import db, pipeline, extractor, embedder
 from app.watcher import watcher
 from app.embedder import get_embedding
 from app import settings as settings_module
@@ -168,6 +168,80 @@ async def switch_root_folder(new_root_str: str):
     )
 
 
+async def _ensure_embedding(f: db.FileRecord) -> tuple[np.ndarray, bool]:
+    """Return the file's embedding, re-embedding if model doesn't match current.
+    Returns (embedding, was_reembedded)."""
+    if (
+        f.embedding is not None
+        and np.any(f.embedding)
+        and embedder.embedding_model_matches(f.embed_model)
+    ):
+        return f.embedding, False
+
+    # Need to re-embed with current model
+    source_text = ""
+    try:
+        src = Path(f.current_path or f.original_path)
+        if src.exists() and extractor.is_supported(src):
+            source_text = extractor.extract(src).text
+    except Exception:
+        pass
+    if not source_text:
+        source_text = f.summary or f.filename
+
+    try:
+        new_emb = await embedder.get_embedding(source_text)
+        if np.any(new_emb):
+            model_tag = embedder.get_current_model_tag()
+            await db.update_file_embedding(f.id, new_emb, model_tag)
+            return new_emb, True
+    except Exception as e:
+        logger.warning(f"Lazy re-embed failed for {f.filename}: {e}")
+
+    # Last resort: return existing embedding even if mismatched
+    if f.embedding is not None and np.any(f.embedding):
+        return f.embedding, False
+    return np.zeros(embedder.get_expected_embedding_dim(), dtype=np.float32), False
+
+
+async def background_reembed_all():
+    """Re-embed all files whose embed_model doesn't match the current provider+model.
+    Runs in the background after a provider/model switch."""
+    model_tag = embedder.get_current_model_tag()
+    files = await db.get_all_files()
+    stale = [
+        f
+        for f in files
+        if f.embed_model != model_tag
+        and f.embedding is not None
+        and np.any(f.embedding)
+    ]
+
+    if not stale:
+        logger.info(f"No stale embeddings to re-embed for {model_tag}")
+        return
+
+    logger.info(f"Background re-embedding {len(stale)} files for {model_tag}")
+    await manager.broadcast({"type": "reembedding_start", "count": len(stale)})
+
+    done = 0
+    for f in stale:
+        try:
+            _, was = await _ensure_embedding(f)
+            if was:
+                done += 1
+        except Exception as e:
+            logger.warning(f"Background re-embed failed for {f.filename}: {e}")
+        # Yield to event loop periodically
+        if done % 5 == 0:
+            await asyncio.sleep(0)
+
+    logger.info(f"Background re-embedding complete: {done}/{len(stale)} updated")
+    await manager.broadcast(
+        {"type": "reembedding_end", "updated": done, "total": len(stale)}
+    )
+
+
 async def _startup_health_check():
     """Verify selected provider is reachable."""
     import httpx
@@ -312,12 +386,20 @@ async def semantic_search(q: str, limit: int = 10):
     except asyncio.TimeoutError:
         raise HTTPException(504, "Embedding generation timed out")
 
+    reembed_budget = 5  # max lazy re-embeds per search
     scored = []
     for f in files:
         if f.embedding is None or len(f.embedding) == 0:
             continue
         emb = f.embedding
-        # Handle dimension mismatch by padding/truncating
+
+        # Lazy re-embed if model doesn't match (up to budget)
+        if not embedder.embedding_model_matches(f.embed_model) and reembed_budget > 0:
+            emb, did = await _ensure_embedding(f)
+            if did:
+                reembed_budget -= 1
+
+        # Handle residual dimension mismatch (last resort fallback)
         if len(emb) != len(query_emb):
             if len(emb) < len(query_emb):
                 emb = np.pad(emb, (0, len(query_emb) - len(emb)))
@@ -500,12 +582,13 @@ async def get_related_files(file_id: int, limit: int = 5):
     if target.embedding is None or not np.any(target.embedding):
         return []
 
-    files = await db.get_all_files()
-    target_emb = target.embedding
+    target_emb, _ = await _ensure_embedding(target)
     target_norm = np.linalg.norm(target_emb)
     if target_norm == 0:
         return []
 
+    files = await db.get_all_files()
+    reembed_budget = 5
     scored = []
     for f in files:
         if f.id == file_id:
@@ -513,6 +596,14 @@ async def get_related_files(file_id: int, limit: int = 5):
         if f.embedding is None or not np.any(f.embedding):
             continue
         emb = f.embedding
+
+        # Lazy re-embed if model doesn't match (up to budget)
+        if not embedder.embedding_model_matches(f.embed_model) and reembed_budget > 0:
+            emb, did = await _ensure_embedding(f)
+            if did:
+                reembed_budget -= 1
+
+        # Handle residual dimension mismatch (last resort fallback)
         if emb.shape[0] != target_emb.shape[0]:
             if emb.shape[0] < target_emb.shape[0]:
                 emb = np.pad(emb, (0, target_emb.shape[0] - emb.shape[0]))

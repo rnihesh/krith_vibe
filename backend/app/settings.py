@@ -67,15 +67,20 @@ async def save_settings(data: dict) -> dict:
     }
     await db.set_settings_bulk(to_store)
 
+    # Detect embed model change before updating runtime config
+    from app import embedder
+
+    old_model_tag = embedder.get_current_model_tag()
+
     # Update live runtime config (except root_folder which is handled by switch)
     settings.update_from_dict(
         {k: v for k, v in data.items() if k != "root_folder" or not root_changing}
     )
 
     # Reset embedding runtime cache so provider/model switches apply immediately
-    from app import embedder
-
     embedder.reset_runtime_state()
+
+    new_model_tag = embedder.get_current_model_tag()
 
     logger.info(f"Settings updated: provider={provider}")
 
@@ -84,6 +89,17 @@ async def save_settings(data: dict) -> dict:
         from app.main import switch_root_folder
 
         await switch_root_folder(data["root_folder"])
+
+    # If embed model changed, fire background re-embed (non-blocking)
+    if old_model_tag != new_model_tag and not root_changing:
+        import asyncio
+        from app.main import background_reembed_all
+
+        asyncio.create_task(background_reembed_all())
+        logger.info(
+            f"Embed model changed ({old_model_tag} -> {new_model_tag}), "
+            f"background re-embed started"
+        )
 
     return await get_settings()
 

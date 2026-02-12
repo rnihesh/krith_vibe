@@ -207,6 +207,7 @@ async def process_file(path: Path) -> int | None:
             current_path=str(path),
             content_hash=result.content_hash,
             embedding=embedding,
+            embed_model=embedder.get_current_model_tag(),
             summary=summary,
             file_type=result.file_type,
             size_bytes=result.size_bytes,
@@ -354,7 +355,9 @@ async def run_clustering():
                 if not np.any(new_emb):
                     raise ValueError("Got zero embedding from provider")
                 embeddings[i] = new_emb
-                await db.update_file_embedding(f.id, new_emb)
+                await db.update_file_embedding(
+                    f.id, new_emb, embedder.get_current_model_tag()
+                )
                 logger.info(f"Re-embedded {f.filename} ({dims[i]}->{target_dim})")
             except Exception as e:
                 logger.warning(f"Re-embedding failed for {f.filename}: {e}")
