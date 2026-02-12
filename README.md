@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="frontend/public/sefs.svg" alt="SEFS Logo" width="200">
+</p>
+
 # SEFS -- Semantic Entropy File System
 
 SEFS is a self-organising file manager that replaces static, manually created folder hierarchies with a dynamic semantic layer. Drop files into a single root folder, and SEFS will automatically read their content, group related files into meaningful folders, and keep the OS-level file structure in sync -- all in real time.
@@ -54,7 +58,9 @@ The result: your filesystem organises itself by meaning, not by arbitrary folder
 
 ### Desktop Notifications -- Real-time alerts for file and cluster events
 
-![Notifications](public/noti.png)
+<p align="center">
+      <img src="public/noti.png" alt="Notifications" style="border-radius: 12px;">
+</p>
 
 ### Settings Panel -- Switch providers, models, and root folder
 
