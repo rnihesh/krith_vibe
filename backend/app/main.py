@@ -117,10 +117,11 @@ async def on_file_change(path: Path):
     """Called by watcher when a file is created or modified."""
     result = await pipeline.process_file(path)
     if result:
-        # Try incremental assignment first; only full recluster if needed
-        assigned = await pipeline.try_incremental_assign(result)
-        if not assigned:
-            await recluster_scheduler.request()
+        # Always do a full recluster so new clusters can form naturally.
+        # Only the new file gets embedded; recluster reuses all existing
+        # embeddings from DB.  Debounce (2s) + cooldown (5s) prevent thrashing
+        # during bulk uploads.
+        await recluster_scheduler.request()
 
 
 async def on_file_delete(path: Path):

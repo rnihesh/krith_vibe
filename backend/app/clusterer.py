@@ -119,13 +119,13 @@ def _agglomerative_fallback(embeddings: np.ndarray) -> np.ndarray:
         n = len(embeddings)
         dist_matrix = cosine_distances(embeddings)
 
-        # distance_threshold=0.52 ≈ cosine similarity threshold of 0.48
-        # This catches pairs like ML docs (sim=0.49) but not recipes (sim=0.28)
+        # distance_threshold=0.45 ≈ cosine similarity threshold of 0.55
+        # Tighter grouping: only merge files that are clearly related (sim ≥ 0.55).
         clustering = AgglomerativeClustering(
             n_clusters=None,
             metric="precomputed",
             linkage="average",
-            distance_threshold=0.52,
+            distance_threshold=0.45,
         )
         labels = clustering.fit_predict(dist_matrix)
 

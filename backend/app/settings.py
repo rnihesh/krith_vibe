@@ -18,6 +18,7 @@ SETTINGS_KEYS = [
     "openai_api_key",
     "openai_model",
     "openai_embed_model",
+    "root_folder",
 ]
 
 
@@ -39,6 +40,7 @@ async def get_settings() -> dict:
         "openai_embed_model": stored.get(
             "openai_embed_model", settings.openai_embed_model
         ),
+        "root_folder": stored.get("root_folder", settings.root_folder),
     }
 
 

@@ -10,6 +10,7 @@ interface Props {
 }
 
 export function SettingsModal({ open, onClose, onToast }: Props) {
+  const [rootFolder, setRootFolder] = useState("~/sefs_root");
   const [provider, setProvider] = useState<"ollama" | "openai">("ollama");
   const [ollamaHost, setOllamaHost] = useState("http://localhost:11434");
   const [ollamaEmbedModel, setOllamaEmbedModel] = useState("nomic-embed-text");
@@ -31,6 +32,7 @@ export function SettingsModal({ open, onClose, onToast }: Props) {
     if (open) {
       getSettings()
         .then((s) => {
+          setRootFolder((s.root_folder as string) || "~/sefs_root");
           setProvider((s.provider as string) === "openai" ? "openai" : "ollama");
           setOllamaHost((s.ollama_host as string) || "http://localhost:11434");
           setOllamaEmbedModel(
@@ -52,6 +54,7 @@ export function SettingsModal({ open, onClose, onToast }: Props) {
   }, [open, onToast]);
 
   const buildPayload = () => ({
+    root_folder: rootFolder,
     provider,
     ollama_host: ollamaHost,
     ollama_embed_model: ollamaEmbedModel,
@@ -134,6 +137,27 @@ export function SettingsModal({ open, onClose, onToast }: Props) {
               </div>
 
               <div className="px-5 py-4 space-y-4">
+                {/* Watched Folder */}
+                <div>
+                  <label className="text-xs text-text-tertiary font-semibold uppercase tracking-wider block mb-1.5">
+                    Watched Folder
+                  </label>
+                  <input
+                    type="text"
+                    value={rootFolder}
+                    onChange={(e) => setRootFolder(e.target.value)}
+                    placeholder="~/sefs_root"
+                    className="w-full h-9 px-3 rounded-lg text-sm text-text-primary border-none outline-none"
+                    style={{
+                      background: "var(--bg-dark)",
+                      border: "1px solid var(--bg-border)",
+                    }}
+                  />
+                  <p className="text-xs text-text-tertiary mt-1">
+                    Changes take effect after clicking Rescan.
+                  </p>
+                </div>
+
                 {/* Provider toggle */}
                 <div>
                   <label className="text-xs text-text-tertiary font-semibold uppercase tracking-wider block mb-2">

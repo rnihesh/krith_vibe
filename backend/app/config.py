@@ -40,6 +40,7 @@ class Settings(BaseSettings):
             "ollama_host": "ollama_host",
             "ollama_embed_model": "ollama_embed_model",
             "ollama_llm_model": "ollama_llm_model",
+            "root_folder": "root_folder",
         }
         if "provider" in data:
             provider = str(data["provider"]).strip().lower()

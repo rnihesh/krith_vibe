@@ -1,6 +1,7 @@
 import { useRef, useEffect, useCallback, useState, useMemo } from "react";
 import ForceGraph2D, { ForceGraphMethods } from "react-force-graph-2d";
 import * as d3Force from "d3-force";
+import forceClustering from "d3-force-clustering";
 import { ZoomIn, ZoomOut, Maximize2, Crosshair } from "lucide-react";
 import { GraphData, GraphNode, getClusterColor } from "../types";
 
@@ -69,7 +70,7 @@ export function GraphView({ data, onNodeClick, searchQuery, rootFolder }: Props)
         label: c.name,
         clusterId: c.id,
         cluster_id: c.id,
-        val: 20 + c.file_count * 5,
+        val: 1,
         file_count: c.file_count,
         description: c.description,
       })),
@@ -79,7 +80,7 @@ export function GraphView({ data, onNodeClick, searchQuery, rootFolder }: Props)
         label: f.label,
         clusterId: f.cluster_id,
         cluster_id: f.cluster_id,
-        val: 6,
+        val: 1,
         file_id: f.file_id,
         filename: f.filename,
         summary: f.summary,
@@ -92,28 +93,24 @@ export function GraphView({ data, onNodeClick, searchQuery, rootFolder }: Props)
       })),
     ];
 
-    const links = data.files.map((f) => ({
-      source: `file-${f.file_id}`,
-      target: `cluster-${f.cluster_id}`,
-    }));
+    // Only link files that belong to a real cluster (skip noise cluster_id = -1)
+    const validClusterIds = new Set(data.clusters.map((c) => c.id));
+    const links = data.files
+      .filter((f) => validClusterIds.has(f.cluster_id))
+      .map((f) => ({
+        source: `file-${f.file_id}`,
+        target: `cluster-${f.cluster_id}`,
+      }));
 
     return { nodes, links };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataKey]);
 
-  // Zoom to fit once after initial layout settles
+  // Reset zoom-to-fit flag when data changes so onEngineStop triggers it
   useEffect(() => {
     if (graphData.nodes.length > 0 && dataKey !== prevDataKey.current) {
       prevDataKey.current = dataKey;
       hasZoomedToFit.current = false;
-      // Zoom to fit after layout has had time to settle
-      const timer = setTimeout(() => {
-        if (!hasZoomedToFit.current && graphRef.current) {
-          graphRef.current.zoomToFit(400, 80);
-          hasZoomedToFit.current = true;
-        }
-      }, 2000);
-      return () => clearTimeout(timer);
     }
   }, [dataKey, graphData.nodes.length]);
 
@@ -125,52 +122,52 @@ export function GraphView({ data, onNodeClick, searchQuery, rootFolder }: Props)
     }
   }, []);
 
-  // Configure d3 forces for better spacing
+  // Configure d3 forces — modify existing forces (don't replace link/charge
+  // since react-force-graph already wired them up with graph data)
   useEffect(() => {
     if (!graphRef.current) return;
     const fg = graphRef.current;
 
-    // Strong center force to keep everything anchored in the middle
-    fg.d3Force("center", d3Force.forceCenter(0, 0).strength(0.1));
+    // Modify existing center force
+    const center = fg.d3Force("center") as any;
+    if (center) center.strength(0.08);
 
-    // Moderate repulsion - not too strong, not too weak
-    fg.d3Force(
-      "charge",
-      d3Force.forceManyBody().strength(-120).distanceMax(250),
-    );
+    // Moderate repulsion — low enough so clusters stay compact
+    const charge = fg.d3Force("charge") as any;
+    if (charge) charge.strength(-80).distanceMax(200);
 
-    // Link force - keeps files connected to clusters
-    fg.d3Force(
-      "link",
-      d3Force
-        .forceLink()
-        .id((d: any) => d.id)
-        .distance(60)
-        .strength(0.7),
-    );
+    // Short links pull files close to their cluster center
+    const link = fg.d3Force("link") as any;
+    if (link) link.distance(25).strength(1.2);
 
-    // Collision - prevent overlap
+    // Collision — just enough to prevent overlap
     fg.d3Force(
       "collide",
       d3Force
         .forceCollide()
-        .radius((d: any) => (d.type === "cluster" ? 35 : 12))
-        .strength(0.7),
+        .radius((d: any) => (d.type === "cluster" ? 15 : 5))
+        .strength(0.8),
+    );
+
+    // Cluster-pull force: pulls file nodes toward their cluster center
+    fg.d3Force(
+      "cluster",
+      forceClustering()
+        .clusterId((d: any) => d.cluster_id)
+        .strength(0.3),
     );
 
     fg.d3ReheatSimulation();
   }, [graphData]);
 
-  // Pin node position after drag temporarily, then unpin after settle
+  // Pin node after drag, then release so it rejoins the simulation
   const handleNodeDragEnd = useCallback((node: any) => {
-    // Temporarily pin so it doesn't fly away
     node.fx = node.x;
     node.fy = node.y;
-    // Unpin after 3 seconds so it rejoins the simulation
     setTimeout(() => {
       node.fx = undefined;
       node.fy = undefined;
-    }, 3000);
+    }, 5000);
   }, []);
 
   const matchesSearch = useCallback(
@@ -192,30 +189,13 @@ export function GraphView({ data, onNodeClick, searchQuery, rootFolder }: Props)
       ctx.globalAlpha = alpha;
 
       if (node.type === "cluster") {
-        const r = Math.sqrt(node.val || 20) * 2;
-
-        // Outer glow
+        // Center dot only — no large transparent circles
         ctx.beginPath();
-        ctx.arc(x, y, r + 3, 0, Math.PI * 2);
-        ctx.fillStyle = color + "08";
-        ctx.fill();
-
-        // Circle fill
-        ctx.beginPath();
-        ctx.arc(x, y, r, 0, Math.PI * 2);
-        ctx.fillStyle = color + "12";
-        ctx.fill();
-        ctx.strokeStyle = color + "35";
-        ctx.lineWidth = 2 / globalScale;
-        ctx.stroke();
-
-        // Center dot
-        ctx.beginPath();
-        ctx.arc(x, y, 4, 0, Math.PI * 2);
+        ctx.arc(x, y, 5, 0, Math.PI * 2);
         ctx.fillStyle = color;
         ctx.fill();
 
-        // Label — positioned above the cluster, always readable
+        // Label — positioned just above center dot
         const fontSize = Math.min(Math.max(13 / globalScale, 4), 16);
         ctx.font = `700 ${fontSize}px "Open Sans", sans-serif`;
         ctx.textAlign = "center";
@@ -224,7 +204,7 @@ export function GraphView({ data, onNodeClick, searchQuery, rootFolder }: Props)
         const label = (node.label || "").replace(/_/g, " ");
         const tw = ctx.measureText(label).width;
         const pad = 5 / globalScale;
-        const ly = y - r - 6 / globalScale; // above the cluster
+        const ly = y - 5 - 10 / globalScale; // 10px above center dot
 
         // Background pill
         const bgColor = isDark
@@ -251,46 +231,45 @@ export function GraphView({ data, onNodeClick, searchQuery, rootFolder }: Props)
         ctx.fillStyle = color;
         ctx.fillText(label, x, ly);
       } else {
-        // File node
-        const r = 5;
+        // File node — tiny dot + small label below
+        const r = 3;
         ctx.beginPath();
         ctx.arc(x, y, r, 0, Math.PI * 2);
         ctx.fillStyle = color;
         ctx.fill();
         ctx.strokeStyle = isDark
-          ? "rgba(26,26,26,0.8)"
-          : "rgba(255,255,255,0.9)";
-        ctx.lineWidth = 1.5 / globalScale;
+          ? "rgba(26,26,26,0.6)"
+          : "rgba(255,255,255,0.8)";
+        ctx.lineWidth = 0.8 / globalScale;
         ctx.stroke();
 
-        // Label below node
-        const fontSize = Math.min(Math.max(10 / globalScale, 2.5), 11);
+        // Label below node — always visible at any zoom level
+        const fontSize = Math.min(Math.max(9 / globalScale, 2), 10);
         ctx.font = `400 ${fontSize}px "Open Sans", sans-serif`;
         ctx.textAlign = "center";
         ctx.textBaseline = "top";
 
         const label = node.label || "";
         const tw = ctx.measureText(label).width;
-        const pad = 3 / globalScale;
-        const ly = y + r + 3 / globalScale;
+        const pad = 2 / globalScale;
+        const ly = y + r + 2 / globalScale;
 
         const bgColor = isDark
-          ? "rgba(26,26,26,0.82)"
-          : "rgba(255,255,255,0.88)";
+          ? "rgba(26,26,26,0.78)"
+          : "rgba(255,255,255,0.84)";
         ctx.fillStyle = bgColor;
         ctx.beginPath();
-        const rr2 = (fontSize + pad * 2) / 2;
         roundRect(
           ctx,
           x - tw / 2 - pad * 2,
           ly - pad,
           tw + pad * 4,
           fontSize + pad * 2,
-          rr2,
+          (fontSize + pad * 2) / 2,
         );
         ctx.fill();
 
-        ctx.fillStyle = isDark ? "#d4d4d4" : "#555555";
+        ctx.fillStyle = isDark ? "#c4c4c4" : "#666666";
         ctx.fillText(label, x, ly);
       }
 
@@ -300,7 +279,7 @@ export function GraphView({ data, onNodeClick, searchQuery, rootFolder }: Props)
   );
 
   const linkColor = useCallback(() => {
-    return isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.06)";
+    return isDark ? "rgba(255,255,255,0.35)" : "rgba(0,0,0,0.25)";
   }, [isDark]);
 
   // Zoom controls
@@ -344,16 +323,17 @@ export function GraphView({ data, onNodeClick, searchQuery, rootFolder }: Props)
             height={dimensions.height}
             graphData={graphData}
             nodeCanvasObject={nodeCanvasObject}
+            nodeCanvasObjectMode={() => "replace"}
+            nodeLabel=""
             nodePointerAreaPaint={(node: any, color, ctx) => {
-              const r =
-                node.type === "cluster" ? Math.sqrt(node.val || 20) * 1.8 : 5;
+              const r = node.type === "cluster" ? 10 : 5;
               ctx.beginPath();
-              ctx.arc(node.x ?? 0, node.y ?? 0, r + 5, 0, Math.PI * 2);
+              ctx.arc(node.x ?? 0, node.y ?? 0, r, 0, Math.PI * 2);
               ctx.fillStyle = color;
               ctx.fill();
             }}
             linkColor={linkColor}
-            linkWidth={0.8}
+            linkWidth={1.5}
             linkDirectionalParticles={0}
             onNodeClick={(node: any) => {
               onNodeClick(node as GraphNode);

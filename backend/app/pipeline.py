@@ -566,10 +566,25 @@ async def try_incremental_assign(file_id: int) -> bool:
     if not f or f.embedding is None or not np.any(f.embedding):
         return False
 
-    # Build centroid map from existing clusters
+    # Build live centroid map from actual file embeddings (stored centroids go
+    # stale as more files are added incrementally without a full recluster).
+    all_files_for_centroids = await db.get_all_files()
     cluster_centroids: dict[int, np.ndarray] = {}
     for c in clusters:
-        if c.centroid is not None and np.any(c.centroid):
+        members = [
+            ff
+            for ff in all_files_for_centroids
+            if ff.cluster_id == c.id
+            and ff.id != file_id
+            and ff.embedding is not None
+            and np.any(ff.embedding)
+        ]
+        if members:
+            cluster_centroids[c.id] = np.mean(
+                [ff.embedding for ff in members], axis=0  # type: ignore[arg-type]
+            )
+        elif c.centroid is not None and np.any(c.centroid):
+            # Fall back to stored centroid if no member files have embeddings
             cluster_centroids[c.id] = c.centroid
 
     if not cluster_centroids:
@@ -670,15 +685,25 @@ async def try_incremental_assign(file_id: int) -> bool:
                 await asyncio.sleep(2.5)
                 set_sync_lock(False)
 
-        # Update cluster file count
+        # Recompute centroid to keep it fresh for the next incremental assign
         updated_count = len(same_cluster) + 1
+        new_centroid = cluster_rec.centroid
+        all_member_embs = [
+            ff.embedding
+            for ff in same_cluster
+            if ff.embedding is not None and np.any(ff.embedding)
+        ]
+        if f.embedding is not None and np.any(f.embedding):
+            all_member_embs.append(f.embedding)
+        if all_member_embs:
+            new_centroid = np.mean(all_member_embs, axis=0).astype(np.float32)
         await db.upsert_cluster(
             db.ClusterRecord(
                 id=cluster_rec.id,
                 name=cluster_rec.name,
                 description=cluster_rec.description,
                 folder_path=cluster_rec.folder_path,
-                centroid=cluster_rec.centroid,
+                centroid=new_centroid,
                 file_count=updated_count,
                 created_at=cluster_rec.created_at,
             )
