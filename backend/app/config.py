@@ -18,8 +18,8 @@ class Settings(BaseSettings):
     openai_embed_model: str = "text-embedding-3-small"
     ollama_host: str = "http://localhost:11434"
     ollama_embed_model: str = "nomic-embed-text"
-    ollama_llm_model: str = "llama3"
-    root_folder: str = "~/sefs_root"
+    ollama_llm_model: str = "llama3.2"
+    root_folder: str = "~/Nihesh/sefs_root"
     host: str = "0.0.0.0"
     port: int = 8484
 

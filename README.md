@@ -4,7 +4,7 @@
 
 # SEFS - Semantic Entropy File System
 
-SEFS is a self-organising file manager that replaces static, manually created folder hierarchies with a dynamic semantic layer. Drop files into a single root folder, and SEFS will automatically read their content, group related files into meaningful folders, and keep the OS-level file structure in sync  all in real time.
+SEFS is a self-organising file manager that replaces static, manually created folder hierarchies with a dynamic semantic layer. Drop files into a single root folder, and SEFS will automatically read their content, group related files into meaningful folders, and keep the OS-level file structure in sync all in real time.
 
 ---
 
@@ -26,6 +26,10 @@ SEFS monitors a single root folder. Every file that appears is:
 The result: your filesystem organises itself by meaning, not by arbitrary folder names you chose months ago.
 
 ---
+
+## Google Drive Video Link
+
+[Watch the video](https://drive.google.com/file/d/1_XYoHyx4qiK6kMllK3e6rUEPox-oEZkp/view?usp=sharing)
 
 ## Screenshots
 
@@ -190,7 +194,7 @@ Settings can be changed from the in-app settings panel, or by editing backend/.e
 
 | Variable           | Default                 | Description              |
 | ------------------ | ----------------------- | ------------------------ |
-| ROOT_FOLDER        | ~/sefs_root             | Folder to monitor        |
+| ROOT_FOLDER        | ~/Nihesh/sefs_root      | Folder to monitor        |
 | SELECTED_PROVIDER  | ollama                  | ollama or openai         |
 | OLLAMA_HOST        | http://localhost:11434  | Ollama server address    |
 | OLLAMA_EMBED_MODEL | nomic-embed-text:latest | Embedding model          |
@@ -222,13 +226,13 @@ Settings can be changed from the in-app settings panel, or by editing backend/.e
 
 ## How It Differs From a Normal File Manager
 
-| Aspect            | Traditional              | SEFS                                 |
-| ----------------- | ------------------------ | ------------------------------------ |
-| Organisation      | Manual folders           | Automatic by content similarity      |
-| Folder names      | User-chosen              | LLM-generated descriptive names      |
-| File discovery    | Browse or keyword search | Semantic search (meaning-based)      |
-| Adapts to changes | No                       | Re-clusters on every file change     |
-| Visualisation     | Tree view                | Force graph + spatial map            |
+| Aspect            | Traditional              | SEFS                                |
+| ----------------- | ------------------------ | ----------------------------------- |
+| Organisation      | Manual folders           | Automatic by content similarity     |
+| Folder names      | User-chosen              | LLM-generated descriptive names     |
+| File discovery    | Browse or keyword search | Semantic search (meaning-based)     |
+| Adapts to changes | No                       | Re-clusters on every file change    |
+| Visualisation     | Tree view                | Force graph + spatial map           |
 | Works at OS level | Yes                      | Yes - files physically move on disk |
 
 ---

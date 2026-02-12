@@ -10,11 +10,11 @@ interface Props {
 }
 
 export function SettingsModal({ open, onClose, onToast }: Props) {
-  const [rootFolder, setRootFolder] = useState("~/sefs_root");
+  const [rootFolder, setRootFolder] = useState("~/Nihesh/sefs_root");
   const [provider, setProvider] = useState<"ollama" | "openai">("ollama");
   const [ollamaHost, setOllamaHost] = useState("http://localhost:11434");
   const [ollamaEmbedModel, setOllamaEmbedModel] = useState("nomic-embed-text");
-  const [ollamaLlmModel, setOllamaLlmModel] = useState("llama3");
+  const [ollamaLlmModel, setOllamaLlmModel] = useState("llama3.2");
   const [openaiKey, setOpenaiKey] = useState("");
   const [openaiModel, setOpenaiModel] = useState("gpt-4o-mini");
   const [openaiEmbedModel, setOpenaiEmbedModel] = useState(
@@ -32,13 +32,15 @@ export function SettingsModal({ open, onClose, onToast }: Props) {
     if (open) {
       getSettings()
         .then((s) => {
-          setRootFolder((s.root_folder as string) || "~/sefs_root");
-          setProvider((s.provider as string) === "openai" ? "openai" : "ollama");
+          setRootFolder((s.root_folder as string) || "~/Nihesh/sefs_root");
+          setProvider(
+            (s.provider as string) === "openai" ? "openai" : "ollama",
+          );
           setOllamaHost((s.ollama_host as string) || "http://localhost:11434");
           setOllamaEmbedModel(
             (s.ollama_embed_model as string) || "nomic-embed-text",
           );
-          setOllamaLlmModel((s.ollama_llm_model as string) || "llama3");
+          setOllamaLlmModel((s.ollama_llm_model as string) || "llama3.2");
           setOpenaiKey("");
           setOpenaiKeySet(Boolean((s as any).openai_api_key_set));
           setOpenaiModel((s.openai_model as string) || "gpt-4o-mini");
@@ -146,7 +148,7 @@ export function SettingsModal({ open, onClose, onToast }: Props) {
                     type="text"
                     value={rootFolder}
                     onChange={(e) => setRootFolder(e.target.value)}
-                    placeholder="~/sefs_root"
+                    placeholder="~/Nihesh/sefs_root"
                     className="w-full h-9 px-3 rounded-lg text-sm text-text-primary border-none outline-none"
                     style={{
                       background: "var(--bg-dark)",
@@ -205,7 +207,7 @@ export function SettingsModal({ open, onClose, onToast }: Props) {
                       label="LLM Model"
                       value={ollamaLlmModel}
                       onChange={setOllamaLlmModel}
-                      placeholder="llama3"
+                      placeholder="llama3.2"
                     />
                   </>
                 )}
@@ -217,7 +219,9 @@ export function SettingsModal({ open, onClose, onToast }: Props) {
                       label="API Key"
                       value={openaiKey}
                       onChange={setOpenaiKey}
-                      placeholder={openaiKeySet ? "Saved (enter to replace)" : "sk-..."}
+                      placeholder={
+                        openaiKeySet ? "Saved (enter to replace)" : "sk-..."
+                      }
                       type="password"
                     />
                     <Field
@@ -239,9 +243,7 @@ export function SettingsModal({ open, onClose, onToast }: Props) {
                 {testResult && (
                   <div
                     className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs ${
-                      testResult.success
-                        ? "text-success"
-                        : "text-error"
+                      testResult.success ? "text-success" : "text-error"
                     }`}
                     style={{ background: "var(--bg-dark)" }}
                   >
