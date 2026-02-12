@@ -1,0 +1,19 @@
+2026-02-12 08:00:01 [INFO] sefs.main: Starting SEFS backend on port 8484
+2026-02-12 08:00:02 [INFO] sefs.db: Database initialized at ./sefs.db
+2026-02-12 08:00:02 [INFO] sefs.watcher: Watching /Users/nihesh/sefs_root
+2026-02-12 08:00:03 [INFO] sefs.pipeline: Full scan of /Users/nihesh/sefs_root
+2026-02-12 08:00:03 [INFO] sefs.pipeline: Found 15 supported files to process
+2026-02-12 08:00:04 [INFO] sefs.pipeline: Processing file: report.pdf
+2026-02-12 08:00:05 [INFO] sefs.embedder: Generated embedding (768d) in 423ms
+2026-02-12 08:00:06 [INFO] sefs.pipeline: Processing file: notes.md
+2026-02-12 08:00:07 [WARNING] sefs.extractor: Large file, truncating: dataset.csv (52MB)
+2026-02-12 08:00:08 [INFO] sefs.clusterer: Running HDBSCAN on 15 files
+2026-02-12 08:00:09 [INFO] sefs.clusterer: Found 4 clusters, 2 noise points
+2026-02-12 08:00:10 [INFO] sefs.namer: Naming cluster 0: "Machine Learning Research"
+2026-02-12 08:00:11 [INFO] sefs.namer: Naming cluster 1: "Project Documentation"
+2026-02-12 08:00:12 [INFO] sefs.sync: Moving 15 files to cluster folders
+2026-02-12 08:00:13 [INFO] sefs.pipeline: Clustering complete: 4 clusters
+2026-02-12 08:00:14 [ERROR] sefs.embedder: Ollama connection refused, retrying...
+2026-02-12 08:00:17 [INFO] sefs.embedder: Reconnected to Ollama
+2026-02-12 08:01:00 [INFO] sefs.watcher: File created: new_document.docx
+2026-02-12 08:01:02 [INFO] sefs.pipeline: Processing file: new_document.docx

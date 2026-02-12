@@ -1,0 +1,61 @@
+type Query {
+  files(limit: Int = 10, offset: Int = 0): [File!]!
+  file(id: ID!): File
+  search(query: String!, limit: Int = 10): [SearchResult!]!
+  clusters: [Cluster!]!
+  events(limit: Int = 50): [Event!]!
+}
+
+type Mutation {
+  uploadFile(input: UploadInput!): File!
+  deleteFile(id: ID!): Boolean!
+  renameCluster(id: ID!, name: String!): Cluster!
+  updateSettings(input: SettingsInput!): Settings!
+}
+
+type File {
+  id: ID!
+  filename: String!
+  currentPath: String!
+  fileType: String!
+  sizeBytes: Int!
+  wordCount: Int!
+  summary: String
+  cluster: Cluster
+  createdAt: DateTime!
+  modifiedAt: DateTime!
+}
+
+type Cluster {
+  id: ID!
+  name: String!
+  description: String
+  fileCount: Int!
+  files: [File!]!
+}
+
+type SearchResult {
+  file: File!
+  score: Float!
+}
+
+type Event {
+  id: ID!
+  eventType: String!
+  detail: String
+  file: File
+  timestamp: DateTime!
+}
+
+input UploadInput {
+  filename: String!
+  content: String!
+}
+
+input SettingsInput {
+  provider: String
+  model: String
+  rootFolder: String
+}
+
+scalar DateTime

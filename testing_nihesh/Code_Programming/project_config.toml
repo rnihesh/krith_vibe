@@ -1,0 +1,26 @@
+[project]
+name = "example-app"
+version = "0.1.0"
+description = "An example TOML configuration file for testing SEFS"
+authors = ["Developer <dev@example.com>"]
+
+[server]
+host = "0.0.0.0"
+port = 8080
+max_connections = 100
+
+[database]
+url = "postgres://localhost:5432/mydb"
+pool_size = 10
+ssl = true
+
+[features]
+enable_cache = true
+cache_ttl = 3600
+enable_metrics = true
+log_level = "info"
+
+[build]
+target = "release"
+optimize = true
+strip = true

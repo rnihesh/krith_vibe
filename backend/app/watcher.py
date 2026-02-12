@@ -123,6 +123,10 @@ class FileWatcher:
         self._on_delete = None
 
     def start(self, loop: asyncio.AbstractEventLoop, on_change, on_delete):
+        # Stop any existing watcher first (supports restart)
+        if self._observer:
+            self.stop()
+
         root = settings.root_path
         root.mkdir(parents=True, exist_ok=True)
 

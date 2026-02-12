@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Weather Dashboard</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <header>
+        <h1>Weather Dashboard</h1>
+        <input type="text" id="city-search" placeholder="Search city...">
+    </header>
+    <main>
+        <section class="current-weather">
+            <div class="temp-display">
+                <span id="temperature">--</span>°C
+            </div>
+            <p id="description">Loading weather data...</p>
+        </section>
+        <section class="forecast">
+            <h2>5-Day Forecast</h2>
+            <div id="forecast-grid" class="grid"></div>
+        </section>
+    </main>
+    <script>
+        async function fetchWeather(city) {
+            const res = await fetch(`/api/weather?city=${city}`);
+            const data = await res.json();
+            document.getElementById('temperature').textContent = data.temp;
+            document.getElementById('description').textContent = data.description;
+        }
+        fetchWeather('London');
+    </script>
+</body>
+</html>

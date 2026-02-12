@@ -1,0 +1,63 @@
+syntax = "proto3";
+
+package sefs.v1;
+
+service FileService {
+  rpc ListFiles(ListFilesRequest) returns (ListFilesResponse);
+  rpc GetFile(GetFileRequest) returns (File);
+  rpc SearchFiles(SearchRequest) returns (SearchResponse);
+  rpc StreamEvents(StreamEventsRequest) returns (stream Event);
+}
+
+message File {
+  int64 id = 1;
+  string filename = 2;
+  string current_path = 3;
+  string file_type = 4;
+  int64 size_bytes = 5;
+  int32 word_count = 6;
+  string summary = 7;
+  int32 cluster_id = 8;
+  string created_at = 9;
+}
+
+message ListFilesRequest {
+  int32 limit = 1;
+  int32 offset = 2;
+  string file_type = 3;
+}
+
+message ListFilesResponse {
+  repeated File files = 1;
+  int32 total = 2;
+}
+
+message GetFileRequest {
+  int64 id = 1;
+}
+
+message SearchRequest {
+  string query = 1;
+  int32 limit = 2;
+}
+
+message SearchResponse {
+  repeated SearchResult results = 1;
+}
+
+message SearchResult {
+  File file = 1;
+  float score = 2;
+}
+
+message Event {
+  int64 id = 1;
+  string event_type = 2;
+  string detail = 3;
+  int64 file_id = 4;
+  string timestamp = 5;
+}
+
+message StreamEventsRequest {
+  int32 limit = 1;
+}

@@ -1,0 +1,44 @@
+$primary: #3b82f6;
+$secondary: #10b981;
+$dark: #0f172a;
+$radius: 8px;
+
+@mixin card($padding: 1.5rem) {
+  background: lighten($dark, 8%);
+  border-radius: $radius;
+  padding: $padding;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+}
+
+.dashboard {
+  display: grid;
+  grid-template-columns: 250px 1fr;
+  min-height: 100vh;
+
+  &__sidebar {
+    @include card(1rem);
+    border-radius: 0;
+
+    .nav-item {
+      padding: 0.75rem 1rem;
+      border-radius: $radius;
+      cursor: pointer;
+      transition: background 0.2s;
+
+      &:hover { background: rgba($primary, 0.15); }
+      &--active { background: rgba($primary, 0.25); color: $primary; }
+    }
+  }
+
+  &__content {
+    padding: 2rem;
+
+    .metric-card {
+      @include card;
+      text-align: center;
+
+      .value { font-size: 2rem; font-weight: 700; color: $primary; }
+      .label { font-size: 0.875rem; opacity: 0.7; margin-top: 0.5rem; }
+    }
+  }
+}

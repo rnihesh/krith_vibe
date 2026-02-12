@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<library>
+  <book isbn="978-0-13-468599-1">
+    <title>The Pragmatic Programmer</title>
+    <author>David Thomas</author>
+    <author>Andrew Hunt</author>
+    <year>2019</year>
+    <category>Software Engineering</category>
+    <pages>352</pages>
+    <rating>4.7</rating>
+  </book>
+  <book isbn="978-0-596-51774-8">
+    <title>JavaScript: The Good Parts</title>
+    <author>Douglas Crockford</author>
+    <year>2008</year>
+    <category>Programming Languages</category>
+    <pages>176</pages>
+    <rating>4.2</rating>
+  </book>
+  <book isbn="978-0-13-235088-4">
+    <title>Clean Code</title>
+    <author>Robert C. Martin</author>
+    <year>2008</year>
+    <category>Software Engineering</category>
+    <pages>464</pages>
+    <rating>4.4</rating>
+  </book>
+</library>

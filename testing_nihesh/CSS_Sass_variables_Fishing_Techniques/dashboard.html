@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard - Analytics Platform</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header>
+    <nav class="navbar">
+      <a href="/" class="logo">Analytics</a>
+      <ul class="nav-links">
+        <li><a href="/dashboard">Dashboard</a></li>
+        <li><a href="/reports">Reports</a></li>
+        <li><a href="/settings">Settings</a></li>
+      </ul>
+    </nav>
+  </header>
+  <main class="dashboard-grid">
+    <section class="card" id="revenue">
+      <h2>Revenue</h2>
+      <p class="metric">$124,500</p>
+      <span class="trend positive">+12.5%</span>
+    </section>
+    <section class="card" id="users">
+      <h2>Active Users</h2>
+      <p class="metric">8,432</p>
+      <span class="trend positive">+5.2%</span>
+    </section>
+    <section class="card" id="orders">
+      <h2>Orders</h2>
+      <p class="metric">1,247</p>
+      <span class="trend negative">-2.1%</span>
+    </section>
+  </main>
+  <script src="dashboard.js"></script>
+</body>
+</html>

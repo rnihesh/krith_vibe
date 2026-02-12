@@ -130,6 +130,44 @@ async def on_file_delete(path: Path):
     await recluster_scheduler.request()
 
 
+async def switch_root_folder(new_root_str: str):
+    """Switch to a different root folder: stop watcher → switch DB → rescan → restart watcher."""
+    new_root = Path(new_root_str).expanduser().resolve()
+    old_root = settings.root_path
+
+    if new_root == old_root:
+        logger.info(f"Root folder unchanged: {new_root}")
+        return
+
+    logger.info(f"Switching root folder: {old_root} → {new_root}")
+    await manager.broadcast({"type": "root_switching", "new_root": str(new_root)})
+
+    # 1. Stop watcher on old folder
+    watcher.stop()
+
+    # 2. Switch per-folder DB (close old, open new)
+    new_root.mkdir(parents=True, exist_ok=True)
+    await db.switch_folder_db(new_root)
+
+    # 3. Update runtime config
+    settings.update_from_dict({"root_folder": str(new_root)})
+
+    # 4. Full scan of new folder
+    await pipeline.full_scan()
+
+    # 5. Restart watcher on new folder
+    loop = asyncio.get_event_loop()
+    watcher.start(loop, on_file_change, on_file_delete)
+
+    logger.info(f"Root folder switched to {new_root}")
+    await manager.broadcast(
+        {
+            "type": "root_switched",
+            "root": str(new_root),
+        }
+    )
+
+
 async def _startup_health_check():
     """Verify selected provider is reachable."""
     import httpx
@@ -163,9 +201,9 @@ async def _startup_health_check():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
-    db_path = Path(__file__).parent.parent / "sefs.db"
-    await db.init_db(db_path)
+    # Startup — open global settings DB
+    global_db_path = Path(__file__).resolve().parent.parent / "sefs.db"
+    await db.init_global_db(global_db_path)
 
     # Load saved settings into runtime config
     stored = await db.get_all_settings()
@@ -177,6 +215,11 @@ async def lifespan(app: FastAPI):
     else:
         # Do not implicitly use OPENAI_API_KEY from environment.
         settings.update_from_dict({"openai_api_key": ""})
+
+    # Open per-folder data DB inside the root folder
+    folder_db_path = db.get_folder_db_path(settings.root_path)
+    settings.root_path.mkdir(parents=True, exist_ok=True)
+    await db.init_db(folder_db_path)
 
     # Set broadcast function for pipeline
     pipeline.set_broadcast(manager.broadcast)

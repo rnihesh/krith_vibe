@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+  <appSettings>
+    <setting name="database.host" value="localhost"/>
+    <setting name="database.port" value="5432"/>
+    <setting name="database.name" value="app_production"/>
+    <setting name="cache.ttl" value="3600"/>
+    <setting name="log.level" value="info"/>
+  </appSettings>
+  <services>
+    <service name="auth" endpoint="https://auth.example.com/api/v2" timeout="5000"/>
+    <service name="storage" endpoint="https://storage.example.com" timeout="10000"/>
+    <service name="notifications" endpoint="https://notify.example.com/ws" timeout="3000"/>
+  </services>
+  <features>
+    <feature name="dark-mode" enabled="true"/>
+    <feature name="beta-search" enabled="false"/>
+    <feature name="ai-suggestions" enabled="true"/>
+  </features>
+</configuration>

@@ -1,0 +1,32 @@
+diff --git a/backend/app/extractor.py b/backend/app/extractor.py
+index a1b2c3d..e4f5g6h 100644
+--- a/backend/app/extractor.py
++++ b/backend/app/extractor.py
+@@ -12,14 +12,28 @@ logger = logging.getLogger("sefs.extractor")
+ 
+ SUPPORTED_EXTENSIONS = {
+     ".pdf",
+     ".txt",
+     ".md",
+     ".markdown",
+     ".docx",
+     ".csv",
+     ".text",
+     ".rst",
++    ".py",
++    ".js",
++    ".ts",
++    ".swift",
++    ".java",
++    ".go",
++    ".rs",
++    ".cpp",
++    ".c",
++    ".rb",
++    ".html",
++    ".css",
++    ".json",
++    ".yaml",
++    ".sql",
++    ".sh",
+ }

@@ -16,6 +16,18 @@ DB_PATH: Path | None = None
 _db: aiosqlite.Connection | None = None
 _lock = asyncio.Lock()
 
+# Global settings DB (lives at backend/sefs.db — stores provider, keys, root_folder)
+_global_db: aiosqlite.Connection | None = None
+_GLOBAL_DB_PATH: Path | None = None
+
+_GLOBAL_SCHEMA = """
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+);
+"""
+
+# Per-folder data DB (lives at <root_folder>/.sefs.db — stores files, clusters, events)
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS files (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -53,11 +65,6 @@ CREATE TABLE IF NOT EXISTS events (
     event_type TEXT NOT NULL,
     detail TEXT DEFAULT '',
     timestamp TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS settings (
-    key TEXT PRIMARY KEY,
-    value TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_files_cluster ON files(cluster_id);
@@ -138,13 +145,39 @@ def _bytes_to_embed(b: Optional[bytes]) -> Optional[np.ndarray]:
     return np.frombuffer(b, dtype=np.float32).copy()
 
 
+async def init_global_db(db_path: Path):
+    """Open the global settings-only DB (backend/sefs.db)."""
+    global _GLOBAL_DB_PATH, _global_db
+    _GLOBAL_DB_PATH = db_path
+    _global_db = await aiosqlite.connect(str(db_path))
+    _global_db.row_factory = aiosqlite.Row
+    await _global_db.executescript(_GLOBAL_SCHEMA)
+    await _global_db.commit()
+
+
 async def init_db(db_path: Path):
+    """Open (or create) the per-folder data DB."""
     global DB_PATH, _db
     DB_PATH = db_path
     _db = await aiosqlite.connect(str(db_path))
     _db.row_factory = aiosqlite.Row
     await _db.executescript(SCHEMA)
     await _db.commit()
+
+
+def get_folder_db_path(root: Path) -> Path:
+    """Return the per-folder DB path: <root>/.sefs.db"""
+    return root / ".sefs.db"
+
+
+async def switch_folder_db(new_root: Path):
+    """Close current per-folder DB and open the one in new_root."""
+    global _db, DB_PATH
+    if _db:
+        await _db.close()
+        _db = None
+    folder_db = get_folder_db_path(new_root)
+    await init_db(folder_db)
 
 
 async def get_db() -> aiosqlite.Connection:
@@ -155,10 +188,13 @@ async def get_db() -> aiosqlite.Connection:
 
 
 async def close_db():
-    global _db
+    global _db, _global_db
     if _db:
         await _db.close()
         _db = None
+    if _global_db:
+        await _global_db.close()
+        _global_db = None
 
 
 # ─── File operations ───────────────────────────────────────────
@@ -436,25 +472,31 @@ async def add_event(file_id: int, event_type: str, detail: str = ""):
         await db.commit()
 
 
-# ─── Settings operations ─────────────────────────────────────
+# ─── Settings operations (use GLOBAL DB) ─────────────────────
+
+
+async def _get_global_db() -> aiosqlite.Connection:
+    if _global_db is None:
+        raise RuntimeError("Global database not initialised.")
+    return _global_db
 
 
 async def get_setting(key: str) -> Optional[str]:
-    db = await get_db()
+    db = await _get_global_db()
     cursor = await db.execute("SELECT value FROM settings WHERE key=?", (key,))
     row = await cursor.fetchone()
     return row["value"] if row else None
 
 
 async def get_all_settings() -> dict[str, str]:
-    db = await get_db()
+    db = await _get_global_db()
     cursor = await db.execute("SELECT key, value FROM settings")
     rows = await cursor.fetchall()
     return {r["key"]: r["value"] for r in rows}
 
 
 async def set_setting(key: str, value: str):
-    db = await get_db()
+    db = await _get_global_db()
     async with _lock:
         await db.execute(
             "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
@@ -464,7 +506,7 @@ async def set_setting(key: str, value: str):
 
 
 async def set_settings_bulk(settings_dict: dict[str, str]):
-    db = await get_db()
+    db = await _get_global_db()
     async with _lock:
         for key, value in settings_dict.items():
             await db.execute(

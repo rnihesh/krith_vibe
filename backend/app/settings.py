@@ -51,11 +51,26 @@ async def save_settings(data: dict) -> dict:
         provider = settings.selected_provider
     data["provider"] = provider
 
-    to_store = {k: str(v) for k, v in data.items() if k in SETTINGS_KEYS and v is not None}
+    # Detect if root_folder is changing
+    new_root = data.get("root_folder")
+    root_changing = False
+    if new_root and str(new_root).strip():
+        from pathlib import Path
+
+        new_root_resolved = Path(new_root).expanduser().resolve()
+        if new_root_resolved != settings.root_path:
+            root_changing = True
+            data["root_folder"] = str(new_root_resolved)
+
+    to_store = {
+        k: str(v) for k, v in data.items() if k in SETTINGS_KEYS and v is not None
+    }
     await db.set_settings_bulk(to_store)
 
-    # Update live runtime config
-    settings.update_from_dict(data)
+    # Update live runtime config (except root_folder which is handled by switch)
+    settings.update_from_dict(
+        {k: v for k, v in data.items() if k != "root_folder" or not root_changing}
+    )
 
     # Reset embedding runtime cache so provider/model switches apply immediately
     from app import embedder
@@ -63,6 +78,13 @@ async def save_settings(data: dict) -> dict:
     embedder.reset_runtime_state()
 
     logger.info(f"Settings updated: provider={provider}")
+
+    # If root folder changed, trigger the full switch (DB + watcher + rescan)
+    if root_changing:
+        from app.main import switch_root_folder
+
+        await switch_root_folder(data["root_folder"])
+
     return await get_settings()
 
 
@@ -85,7 +107,10 @@ async def test_connection(data: dict) -> dict:
                         "message": f"Connected to Ollama ({len(models)} models available)",
                         "models": model_names,
                     }
-                return {"success": False, "message": f"Ollama returned {resp.status_code}"}
+                return {
+                    "success": False,
+                    "message": f"Ollama returned {resp.status_code}",
+                }
         except Exception as e:
             return {"success": False, "message": f"Cannot reach Ollama: {e}"}
 
