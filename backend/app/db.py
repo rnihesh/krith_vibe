@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS files (
     size_bytes INTEGER DEFAULT 0,
     word_count INTEGER DEFAULT 0,
     page_count INTEGER DEFAULT 0,
+    pinned INTEGER DEFAULT 0,
     created_at TEXT NOT NULL,
     modified_at TEXT NOT NULL,
     UNIQUE(original_path)
@@ -57,6 +58,7 @@ CREATE TABLE IF NOT EXISTS clusters (
     folder_path TEXT DEFAULT '',
     centroid BLOB,
     file_count INTEGER DEFAULT 0,
+    is_manual INTEGER DEFAULT 0,
     created_at TEXT NOT NULL
 );
 
@@ -91,6 +93,7 @@ class FileRecord:
     size_bytes: int = 0
     word_count: int = 0
     page_count: int = 0
+    pinned: int = 0
     created_at: str = ""
     modified_at: str = ""
 
@@ -106,6 +109,7 @@ class FileRecord:
             "size_bytes": self.size_bytes,
             "word_count": self.word_count,
             "page_count": self.page_count,
+            "pinned": self.pinned,
             "umap_x": self.umap_x,
             "umap_y": self.umap_y,
             "created_at": self.created_at,
@@ -122,6 +126,7 @@ class ClusterRecord:
     folder_path: str = ""
     centroid: Optional[np.ndarray] = None
     file_count: int = 0
+    is_manual: int = 0
     created_at: str = ""
 
     def to_dict(self) -> dict:
@@ -131,6 +136,7 @@ class ClusterRecord:
             "description": self.description,
             "folder_path": self.folder_path,
             "file_count": self.file_count,
+            "is_manual": self.is_manual,
             "created_at": self.created_at,
         }
 
@@ -165,12 +171,18 @@ async def init_db(db_path: Path):
     _db.row_factory = aiosqlite.Row
     await _db.executescript(SCHEMA)
     await _db.commit()
-    # Migrate: add embed_model column if missing (existing DBs)
-    try:
-        await _db.execute("ALTER TABLE files ADD COLUMN embed_model TEXT DEFAULT ''")
-        await _db.commit()
-    except Exception:
-        pass  # Column already exists
+    # Migrate: add columns if missing (existing DBs)
+    migrations = [
+        "ALTER TABLE files ADD COLUMN embed_model TEXT DEFAULT ''",
+        "ALTER TABLE files ADD COLUMN pinned INTEGER DEFAULT 0",
+        "ALTER TABLE clusters ADD COLUMN is_manual INTEGER DEFAULT 0",
+    ]
+    for sql in migrations:
+        try:
+            await _db.execute(sql)
+            await _db.commit()
+        except Exception:
+            pass  # Column already exists
 
 
 def get_folder_db_path(root: Path) -> Path:
@@ -417,6 +429,7 @@ def _row_to_file(row) -> FileRecord:
         size_bytes=row["size_bytes"],
         word_count=row["word_count"],
         page_count=row["page_count"],
+        pinned=row["pinned"] if "pinned" in row.keys() else 0,
         created_at=row["created_at"],
         modified_at=row["modified_at"],
     )
@@ -430,8 +443,8 @@ async def upsert_cluster(c: ClusterRecord):
     async with _lock:
         await db.execute(
             """INSERT OR REPLACE INTO clusters
-               (id, name, description, folder_path, centroid, file_count, created_at)
-               VALUES (?,?,?,?,?,?,?)""",
+               (id, name, description, folder_path, centroid, file_count, is_manual, created_at)
+               VALUES (?,?,?,?,?,?,?,?)""",
             (
                 c.id,
                 c.name,
@@ -439,6 +452,7 @@ async def upsert_cluster(c: ClusterRecord):
                 c.folder_path,
                 _embed_to_bytes(c.centroid),
                 c.file_count,
+                c.is_manual,
                 c.created_at,
             ),
         )
@@ -459,6 +473,7 @@ async def get_all_clusters() -> list[ClusterRecord]:
                 folder_path=row["folder_path"],
                 centroid=_bytes_to_embed(row["centroid"]),
                 file_count=row["file_count"],
+                is_manual=row["is_manual"] if "is_manual" in row.keys() else 0,
                 created_at=row["created_at"],
             )
         )
@@ -466,13 +481,103 @@ async def get_all_clusters() -> list[ClusterRecord]:
 
 
 async def clear_clusters():
+    """Delete all auto-generated clusters. Manual (is_manual=1) clusters are preserved."""
     db = await get_db()
     async with _lock:
-        await db.execute("DELETE FROM clusters")
+        await db.execute("DELETE FROM clusters WHERE is_manual = 0")
         await db.commit()
 
 
-# ─── Event operations ─────────────────────────────────────────
+async def get_next_cluster_id() -> int:
+    """Return the next available cluster ID (max + 1, at least 100 for manual clusters)."""
+    db = await get_db()
+    cursor = await db.execute("SELECT MAX(id) as max_id FROM clusters")
+    row = await cursor.fetchone()
+    max_id = row["max_id"] if row and row["max_id"] is not None else -1
+    return max(max_id + 1, 100)
+
+
+async def get_cluster_by_id(cluster_id: int) -> Optional[ClusterRecord]:
+    db = await get_db()
+    cursor = await db.execute("SELECT * FROM clusters WHERE id=?", (cluster_id,))
+    row = await cursor.fetchone()
+    if not row:
+        return None
+    return ClusterRecord(
+        id=row["id"],
+        name=row["name"],
+        description=row["description"],
+        folder_path=row["folder_path"],
+        centroid=_bytes_to_embed(row["centroid"]),
+        file_count=row["file_count"],
+        is_manual=row["is_manual"] if "is_manual" in row.keys() else 0,
+        created_at=row["created_at"],
+    )
+
+
+async def delete_cluster(cluster_id: int):
+    """Delete a cluster by ID."""
+    db = await get_db()
+    async with _lock:
+        await db.execute("DELETE FROM clusters WHERE id=?", (cluster_id,))
+        await db.commit()
+
+
+async def rename_cluster(cluster_id: int, new_name: str, new_folder_path: str = ""):
+    db = await get_db()
+    async with _lock:
+        if new_folder_path:
+            await db.execute(
+                "UPDATE clusters SET name=?, folder_path=? WHERE id=?",
+                (new_name, new_folder_path, cluster_id),
+            )
+        else:
+            await db.execute(
+                "UPDATE clusters SET name=? WHERE id=?", (new_name, cluster_id)
+            )
+        await db.commit()
+
+
+async def update_cluster_file_count(cluster_id: int, count: int):
+    db = await get_db()
+    async with _lock:
+        await db.execute(
+            "UPDATE clusters SET file_count=? WHERE id=?", (count, cluster_id)
+        )
+        await db.commit()
+
+
+async def pin_file(file_id: int):
+    db = await get_db()
+    async with _lock:
+        await db.execute("UPDATE files SET pinned=1 WHERE id=?", (file_id,))
+        await db.commit()
+
+
+async def unpin_file(file_id: int):
+    db = await get_db()
+    async with _lock:
+        await db.execute("UPDATE files SET pinned=0 WHERE id=?", (file_id,))
+        await db.commit()
+
+
+async def get_pinned_file_ids() -> set[int]:
+    db = await get_db()
+    cursor = await db.execute("SELECT id FROM files WHERE pinned=1")
+    rows = await cursor.fetchall()
+    return {row["id"] for row in rows}
+
+
+async def count_files_in_cluster(cluster_id: int) -> int:
+    db = await get_db()
+    cursor = await db.execute(
+        "SELECT COUNT(*) as cnt FROM files WHERE cluster_id=?", (cluster_id,)
+    )
+    row = await cursor.fetchone()
+    return row["cnt"] if row else 0
+
+
+# ─── Event operations ────────────────────────────────────────
 
 
 async def add_event(file_id: int, event_type: str, detail: str = ""):

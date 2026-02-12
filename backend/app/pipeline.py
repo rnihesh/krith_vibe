@@ -271,7 +271,7 @@ async def remove_file(path: Path):
 
 
 async def run_clustering():
-    """Re-cluster all files and sync to OS folders."""
+    """Re-cluster all files and sync to OS folders. Respects pinned files."""
     await _repair_file_records()
 
     files = await db.get_all_files()
@@ -279,10 +279,15 @@ async def run_clustering():
         logger.info("No files to cluster")
         return
 
-    # Gather embeddings
+    # Separate pinned files — they keep their current cluster assignment
+    pinned_ids = await db.get_pinned_file_ids()
+    pinned_files = [f for f in files if f.id in pinned_ids]
+    auto_files = [f for f in files if f.id not in pinned_ids]
+
+    # Gather embeddings only for auto-managed files
     embeddings = []
     valid_files = []
-    for f in files:
+    for f in auto_files:
         if f.embedding is not None and np.any(f.embedding):
             embeddings.append(f.embedding)
             valid_files.append(f)
@@ -462,12 +467,13 @@ async def run_clustering():
             )
         )
 
-    # Atomically replace clusters: clear old, write all new at once
+    # Atomically replace auto clusters: clear auto, write all new at once
+    # Manual clusters (is_manual=1) are preserved by clear_clusters()
     await db.clear_clusters()
     for cr in cluster_records:
         await db.upsert_cluster(cr)
 
-    # Update file records
+    # Update file records for auto-managed files
     file_cluster_map = {}
     for i, f in enumerate(valid_files):
         cid = int(labels[i])
@@ -484,6 +490,25 @@ async def run_clustering():
             "filename": f.filename,
             "cluster_id": cid,
         }
+
+    # Include pinned files in the sync map — they keep their existing cluster
+    # but we still need to ensure they end up in the right folder
+    manual_clusters = [c for c in await db.get_all_clusters() if c.is_manual]
+    all_cluster_names = dict(cluster_names)
+    for mc in manual_clusters:
+        all_cluster_names[mc.id] = mc.name
+
+    for f in pinned_files:
+        if f.cluster_id >= 0 and f.cluster_id in all_cluster_names:
+            target_folder = all_cluster_names[f.cluster_id]
+            file_cluster_map[f.id] = {
+                "current_path": f.current_path,
+                "original_path": f.original_path,
+                "filename": f.filename,
+                "cluster_id": f.cluster_id,
+            }
+            # Ensure the cluster name is in the names map for sync
+            cluster_names.setdefault(f.cluster_id, target_folder)
 
     # Sync to OS
     moves = await sync.sync_files_to_folders(file_cluster_map, cluster_names)

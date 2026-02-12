@@ -15,6 +15,9 @@ import {
   Sparkles,
   Settings,
   MessageSquare,
+  Plus,
+  Pencil,
+  Trash2,
 } from "lucide-react";
 import {
   GraphData,
@@ -31,6 +34,10 @@ import {
   rescan,
   semanticSearch,
   SearchResult,
+  moveFileToCluster,
+  createCluster,
+  renameCluster,
+  deleteCluster,
 } from "./api";
 import { useWebSocket } from "./hooks/useWebSocket";
 import { useTheme } from "./hooks/useTheme";
@@ -87,6 +94,16 @@ export default function App() {
 
   // Chat panel
   const [chatOpen, setChatOpen] = useState(false);
+
+  // New cluster modal
+  const [newClusterOpen, setNewClusterOpen] = useState(false);
+  const [newClusterName, setNewClusterName] = useState("");
+  const newClusterInputRef = useRef<HTMLInputElement>(null);
+
+  // Inline cluster rename in legend
+  const [editingClusterId, setEditingClusterId] = useState<number | null>(null);
+  const [editingClusterName, setEditingClusterName] = useState("");
+  const editClusterInputRef = useRef<HTMLInputElement>(null);
 
   const notifyForEvent = useCallback((event: WSEvent) => {
     if (event.type === "file_added" && event.filename) {
@@ -154,6 +171,10 @@ export default function App() {
         case "file_added":
         case "file_modified":
         case "file_removed":
+        case "file_moved":
+        case "cluster_created":
+        case "cluster_updated":
+        case "cluster_deleted":
           clearTimeout(refreshTimer.current);
           refreshTimer.current = setTimeout(fetchData, 1000);
           break;
@@ -228,6 +249,62 @@ export default function App() {
       setSelectedNode(node);
     },
     [graphData],
+  );
+
+  // ─── Human Review Handlers ─────────────────────────────────
+
+  const handleMoveFile = useCallback(
+    async (fileId: number, clusterId: number) => {
+      try {
+        await moveFileToCluster(fileId, clusterId);
+        addToast("success", "File moved successfully");
+        fetchData();
+      } catch (e: any) {
+        addToast("error", e?.message || "Failed to move file");
+      }
+    },
+    [addToast, fetchData],
+  );
+
+  const handleCreateCluster = useCallback(
+    async (name: string) => {
+      try {
+        await createCluster(name);
+        addToast("success", `Cluster "${name}" created`);
+        setNewClusterOpen(false);
+        setNewClusterName("");
+        fetchData();
+      } catch (e: any) {
+        addToast("error", e?.message || "Failed to create cluster");
+      }
+    },
+    [addToast, fetchData],
+  );
+
+  const handleRenameCluster = useCallback(
+    async (clusterId: number, newName: string) => {
+      try {
+        await renameCluster(clusterId, newName);
+        addToast("success", `Cluster renamed to "${newName}"`);
+        fetchData();
+      } catch (e: any) {
+        addToast("error", e?.message || "Failed to rename cluster");
+      }
+    },
+    [addToast, fetchData],
+  );
+
+  const handleDeleteCluster = useCallback(
+    async (clusterId: number) => {
+      try {
+        await deleteCluster(clusterId);
+        addToast("success", "Cluster deleted");
+        fetchData();
+      } catch (e: any) {
+        addToast("error", e?.message || "Failed to delete cluster");
+      }
+    },
+    [addToast, fetchData],
   );
 
   return (
@@ -560,6 +637,9 @@ export default function App() {
                   <GraphView
                     data={graphData}
                     onNodeClick={handleSelectNode}
+                    onMoveFile={handleMoveFile}
+                    onRenameCluster={handleRenameCluster}
+                    onDeleteCluster={handleDeleteCluster}
                     searchQuery={searchQuery}
                     rootFolder={status.root_folder}
                   />
@@ -585,22 +665,157 @@ export default function App() {
           {/* Cluster legend */}
           {graphData && graphData.clusters.length > 0 && (
             <div className="absolute bottom-14 left-4 flex flex-col gap-1 p-3 bg-bg-card border border-bg-border rounded-lg shadow-md text-xs max-h-48 overflow-y-auto">
-              <span className="text-[10px] text-text-tertiary font-semibold uppercase tracking-wider mb-1">
-                Clusters
-              </span>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[10px] text-text-tertiary font-semibold uppercase tracking-wider">
+                  Clusters
+                </span>
+                <button
+                  onClick={() => {
+                    setNewClusterOpen(true);
+                    setTimeout(() => newClusterInputRef.current?.focus(), 100);
+                  }}
+                  className="w-5 h-5 flex items-center justify-center rounded bg-bg-dark text-text-tertiary hover:text-accent hover:bg-accent/10 cursor-pointer border-none transition-colors"
+                  title="Create new cluster"
+                >
+                  <Plus size={12} />
+                </button>
+              </div>
               {graphData.clusters.map((c) => (
-                <div key={c.id} className="flex items-center gap-2">
+                <div key={c.id} className="flex items-center gap-2 group">
                   <div
                     className="w-2.5 h-2.5 rounded-full shrink-0"
-                    style={{ background: getClusterColor(c.id) }}
+                    style={{
+                      background: getClusterColor(c.id),
+                      border: c.is_manual ? `1.5px dashed ${getClusterColor(c.id)}` : "none",
+                    }}
                   />
-                  <span className="text-text-secondary">
-                    {c.name}{" "}
-                    <span className="text-text-tertiary">({c.file_count})</span>
-                  </span>
+                  {editingClusterId === c.id ? (
+                    <input
+                      ref={editClusterInputRef}
+                      className="flex-1 h-5 px-1.5 rounded text-xs bg-bg-dark text-text-primary border border-accent outline-none"
+                      value={editingClusterName}
+                      onChange={(e) => setEditingClusterName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && editingClusterName.trim()) {
+                          handleRenameCluster(c.id, editingClusterName.trim());
+                          setEditingClusterId(null);
+                        }
+                        if (e.key === "Escape") setEditingClusterId(null);
+                      }}
+                      onBlur={() => setEditingClusterId(null)}
+                      autoFocus
+                    />
+                  ) : (
+                    <>
+                      <span
+                        className="text-text-secondary flex-1 cursor-pointer"
+                        onDoubleClick={() => {
+                          setEditingClusterId(c.id);
+                          setEditingClusterName(c.name);
+                          setTimeout(() => editClusterInputRef.current?.focus(), 50);
+                        }}
+                        title="Double-click to rename"
+                      >
+                        {c.name}{" "}
+                        <span className="text-text-tertiary">({c.file_count})</span>
+                      </span>
+                      <button
+                        onClick={() => {
+                          setEditingClusterId(c.id);
+                          setEditingClusterName(c.name);
+                          setTimeout(() => editClusterInputRef.current?.focus(), 50);
+                        }}
+                        className="w-4 h-4 items-center justify-center rounded bg-transparent text-text-tertiary hover:text-accent cursor-pointer border-none transition-colors hidden group-hover:flex"
+                        title="Rename cluster"
+                      >
+                        <Pencil size={10} />
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (c.file_count > 0) {
+                            addToast("error", `Cannot delete "${c.name}" — move files out first`);
+                          } else {
+                            handleDeleteCluster(c.id);
+                          }
+                        }}
+                        className="w-4 h-4 items-center justify-center rounded bg-transparent text-text-tertiary hover:text-red-500 cursor-pointer border-none transition-colors hidden group-hover:flex"
+                        title={c.file_count > 0 ? "Move files out first" : "Delete cluster"}
+                      >
+                        <Trash2 size={10} />
+                      </button>
+                    </>
+                  )}
                 </div>
               ))}
             </div>
+          )}
+
+          {/* Cluster legend — no clusters yet, still show create button */}
+          {graphData && graphData.clusters.length === 0 && (
+            <div className="absolute bottom-14 left-4 p-3 bg-bg-card border border-bg-border rounded-lg shadow-md text-xs">
+              <button
+                onClick={() => {
+                  setNewClusterOpen(true);
+                  setTimeout(() => newClusterInputRef.current?.focus(), 100);
+                }}
+                className="flex items-center gap-1.5 text-text-tertiary hover:text-accent cursor-pointer border-none bg-transparent text-xs"
+              >
+                <Plus size={12} />
+                Create cluster
+              </button>
+            </div>
+          )}
+
+          {/* New Cluster popover */}
+          {newClusterOpen && (
+            <>
+              <div
+                className="fixed inset-0 z-[99]"
+                onClick={() => { setNewClusterOpen(false); setNewClusterName(""); }}
+              />
+              <div
+                className="absolute bottom-14 left-4 z-[100] w-64 p-3 rounded-xl shadow-xl"
+                style={{
+                  background: "var(--bg-card)",
+                  border: "1px solid var(--bg-border)",
+                }}
+              >
+                <div className="text-xs font-semibold text-text-primary mb-2">New Cluster</div>
+                <input
+                  ref={newClusterInputRef}
+                  className="w-full h-8 px-2.5 rounded-lg text-sm bg-bg-dark text-text-primary border border-bg-border outline-none focus:border-accent"
+                  placeholder="Cluster name..."
+                  value={newClusterName}
+                  onChange={(e) => setNewClusterName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && newClusterName.trim()) {
+                      handleCreateCluster(newClusterName.trim());
+                    }
+                    if (e.key === "Escape") {
+                      setNewClusterOpen(false);
+                      setNewClusterName("");
+                    }
+                  }}
+                />
+                <div className="flex justify-end gap-2 mt-2">
+                  <button
+                    className="px-2.5 py-1 text-xs rounded-lg bg-bg-dark text-text-secondary hover:text-text-primary cursor-pointer border-none"
+                    onClick={() => { setNewClusterOpen(false); setNewClusterName(""); }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    className="px-2.5 py-1 text-xs rounded-lg bg-accent text-white cursor-pointer border-none hover:bg-accent-hover disabled:opacity-50"
+                    disabled={!newClusterName.trim()}
+                    onClick={() => {
+                      if (newClusterName.trim()) handleCreateCluster(newClusterName.trim());
+                    }}
+                  >
+                    Create
+                  </button>
+                </div>
+              </div>
+            </>
           )}
 
           {/* Metrics Panel */}
@@ -627,6 +842,8 @@ export default function App() {
           selectedNode={selectedNode}
           onClose={() => setSelectedNode(null)}
           onSelectNode={handleSelectNode}
+          clusters={graphData?.clusters}
+          onDataChange={fetchData}
         />
       </div>
 

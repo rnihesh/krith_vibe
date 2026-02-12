@@ -3,16 +3,19 @@ import ForceGraph2D, { ForceGraphMethods } from "react-force-graph-2d";
 import * as d3Force from "d3-force";
 import forceClustering from "d3-force-clustering";
 import { ZoomIn, ZoomOut, Maximize2, Crosshair } from "lucide-react";
-import { GraphData, GraphNode, getClusterColor } from "../types";
+import { GraphData, GraphNode, ClusterInfo, getClusterColor } from "../types";
 
 interface Props {
   data: GraphData | null;
   onNodeClick: (node: GraphNode) => void;
+  onMoveFile?: (fileId: number, clusterId: number) => void;
+  onRenameCluster?: (clusterId: number, newName: string) => void;
+  onDeleteCluster?: (clusterId: number) => void;
   searchQuery: string;
   rootFolder?: string;
 }
 
-export function GraphView({ data, onNodeClick, searchQuery, rootFolder }: Props) {
+export function GraphView({ data, onNodeClick, onMoveFile, onRenameCluster, onDeleteCluster, searchQuery, rootFolder }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<ForceGraphMethods | undefined>(undefined);
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
@@ -21,6 +24,21 @@ export function GraphView({ data, onNodeClick, searchQuery, rootFolder }: Props)
   );
   const hasZoomedToFit = useRef(false);
   const prevDataKey = useRef<string>("");
+
+  // Drag-to-cluster state
+  const dragTargetRef = useRef<string | null>(null);
+  const draggingNodeRef = useRef<any>(null);
+
+  // Context menu state
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    node: any;
+  } | null>(null);
+  const [renameInput, setRenameInput] = useState<{
+    clusterId: number;
+    name: string;
+  } | null>(null);
 
   // Watch for dark mode changes
   useEffect(() => {
@@ -45,18 +63,18 @@ export function GraphView({ data, onNodeClick, searchQuery, rootFolder }: Props)
     return () => ro.disconnect();
   }, []);
 
-  // Build a stable data key so we only rebuild graph data when actual content changes
+  // Build a stable data key — includes cluster assignments so graph rebuilds on moves/renames
   const dataKey = useMemo(() => {
     if (!data) return "";
-    const fileIds = data.files
-      .map((f) => f.file_id)
+    const fileParts = data.files
+      .map((f) => `${f.file_id}:${f.cluster_id}:${f.pinned ?? 0}`)
       .sort()
       .join(",");
-    const clusterIds = data.clusters
-      .map((c) => c.id)
+    const clusterParts = data.clusters
+      .map((c) => `${c.id}:${c.name}:${c.is_manual ?? 0}:${c.file_count}`)
       .sort()
       .join(",");
-    return `${fileIds}|${clusterIds}`;
+    return `${fileParts}|${clusterParts}`;
   }, [data]);
 
   // Stable graph data — only rebuild when dataKey changes (new files/clusters)
@@ -73,6 +91,7 @@ export function GraphView({ data, onNodeClick, searchQuery, rootFolder }: Props)
         val: 1,
         file_count: c.file_count,
         description: c.description,
+        is_manual: c.is_manual,
       })),
       ...data.files.map((f) => ({
         id: `file-${f.file_id}`,
@@ -90,6 +109,7 @@ export function GraphView({ data, onNodeClick, searchQuery, rootFolder }: Props)
         word_count: f.word_count,
         page_count: f.page_count,
         key_topics: f.key_topics,
+        pinned: f.pinned,
       })),
     ];
 
@@ -161,14 +181,76 @@ export function GraphView({ data, onNodeClick, searchQuery, rootFolder }: Props)
   }, [graphData]);
 
   // Pin node after drag, then release so it rejoins the simulation
+  // Also detect if file was dropped on a cluster node (drag-to-cluster)
   const handleNodeDragEnd = useCallback((node: any) => {
+    const dropTarget = dragTargetRef.current;
+    dragTargetRef.current = null;
+    draggingNodeRef.current = null;
+
+    // If a file was dragged onto a cluster, trigger move
+    if (node.type === "file" && dropTarget && onMoveFile) {
+      const targetClusterId = parseInt(dropTarget.replace("cluster-", ""), 10);
+      if (!isNaN(targetClusterId) && targetClusterId !== node.cluster_id) {
+        onMoveFile(node.file_id, targetClusterId);
+        return; // Don't pin position
+      }
+    }
+
     node.fx = node.x;
     node.fy = node.y;
     setTimeout(() => {
       node.fx = undefined;
       node.fy = undefined;
     }, 5000);
+  }, [onMoveFile]);
+
+  // Track drag position to highlight potential drop targets
+  const handleNodeDrag = useCallback((node: any) => {
+    if (node.type !== "file") {
+      draggingNodeRef.current = null;
+      return;
+    }
+    draggingNodeRef.current = node;
+
+    // Find closest cluster node within drop radius
+    const HIT_RADIUS = 30;
+    let closestCluster: string | null = null;
+    let closestDist = Infinity;
+
+    for (const n of graphData.nodes) {
+      if (n.type !== "cluster" || (n as any).cluster_id === node.cluster_id) continue;
+      const dx = (node.x ?? 0) - ((n as any).x ?? 0);
+      const dy = (node.y ?? 0) - ((n as any).y ?? 0);
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < HIT_RADIUS && dist < closestDist) {
+        closestDist = dist;
+        closestCluster = (n as any).id;
+      }
+    }
+    dragTargetRef.current = closestCluster;
+  }, [graphData.nodes]);
+
+  // Right-click context menu
+  const handleNodeRightClick = useCallback((node: any, event: MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setContextMenu({ x: event.clientX, y: event.clientY, node });
   }, []);
+
+  // Close context menu on click outside or Escape
+  useEffect(() => {
+    if (!contextMenu) return;
+    const handleClick = () => setContextMenu(null);
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setContextMenu(null);
+    };
+    window.addEventListener("click", handleClick);
+    window.addEventListener("keydown", handleKey);
+    return () => {
+      window.removeEventListener("click", handleClick);
+      window.removeEventListener("keydown", handleKey);
+    };
+  }, [contextMenu]);
 
   const matchesSearch = useCallback(
     (label: string) => {
@@ -185,15 +267,39 @@ export function GraphView({ data, onNodeClick, searchQuery, rootFolder }: Props)
       const color = getClusterColor(node.clusterId ?? 0);
       const matches = matchesSearch(node.label || "");
       const alpha = matches ? 1 : 0.15;
+      const isDropTarget = dragTargetRef.current === node.id;
 
       ctx.globalAlpha = alpha;
 
       if (node.type === "cluster") {
-        // Center dot only — no large transparent circles
+        // Drop target highlight glow
+        if (isDropTarget) {
+          ctx.beginPath();
+          ctx.arc(x, y, 18, 0, Math.PI * 2);
+          ctx.fillStyle = color + "30";
+          ctx.fill();
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 2.5 / globalScale;
+          ctx.setLineDash([4 / globalScale, 3 / globalScale]);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+
+        // Center dot — dashed border for manual clusters
         ctx.beginPath();
         ctx.arc(x, y, 5, 0, Math.PI * 2);
         ctx.fillStyle = color;
         ctx.fill();
+
+        if (node.is_manual) {
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 1.5 / globalScale;
+          ctx.setLineDash([2 / globalScale, 2 / globalScale]);
+          ctx.beginPath();
+          ctx.arc(x, y, 8, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
 
         // Label — positioned just above center dot
         const fontSize = Math.min(Math.max(13 / globalScale, 4), 16);
@@ -242,6 +348,16 @@ export function GraphView({ data, onNodeClick, searchQuery, rootFolder }: Props)
           : "rgba(255,255,255,0.8)";
         ctx.lineWidth = 0.8 / globalScale;
         ctx.stroke();
+
+        // Pin indicator — small pin icon next to pinned files
+        if (node.pinned) {
+          const pinSize = Math.min(Math.max(7 / globalScale, 2), 8);
+          ctx.fillStyle = "#e2a308";
+          ctx.font = `${pinSize}px sans-serif`;
+          ctx.textAlign = "left";
+          ctx.textBaseline = "middle";
+          ctx.fillText("📌", x + r + 1 / globalScale, y);
+        }
 
         // Label below node — always visible at any zoom level
         const fontSize = Math.min(Math.max(9 / globalScale, 2), 10);
@@ -338,7 +454,9 @@ export function GraphView({ data, onNodeClick, searchQuery, rootFolder }: Props)
             onNodeClick={(node: any) => {
               onNodeClick(node as GraphNode);
             }}
+            onNodeDrag={handleNodeDrag}
             onNodeDragEnd={handleNodeDragEnd}
+            onNodeRightClick={handleNodeRightClick}
             onEngineStop={handleEngineStop}
             d3AlphaDecay={0.02}
             d3VelocityDecay={0.4}
@@ -391,6 +509,126 @@ export function GraphView({ data, onNodeClick, searchQuery, rootFolder }: Props)
               <Crosshair size={18} />
             </button>
           </div>
+
+          {/* Context Menu */}
+          {contextMenu && (
+            <div
+              className="fixed z-[200] min-w-[180px] py-1 rounded-lg shadow-xl"
+              style={{
+                left: contextMenu.x,
+                top: contextMenu.y,
+                background: "var(--bg-card)",
+                border: "1px solid var(--bg-border)",
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {contextMenu.node.type === "file" && (
+                <>
+                  <div className="px-3 py-1.5 text-[10px] text-text-tertiary font-semibold uppercase tracking-wider">
+                    Move to cluster
+                  </div>
+                  {data?.clusters.filter((c) => c.id !== contextMenu.node.cluster_id).map((c) => (
+                    <button
+                      key={c.id}
+                      className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-text-primary hover:bg-bg-dark cursor-pointer border-none bg-transparent text-left"
+                      onClick={() => {
+                        if (onMoveFile) onMoveFile(contextMenu.node.file_id, c.id);
+                        setContextMenu(null);
+                      }}
+                    >
+                      <div
+                        className="w-2.5 h-2.5 rounded-full shrink-0"
+                        style={{ background: getClusterColor(c.id) }}
+                      />
+                      <span className="truncate">{c.name}</span>
+                    </button>
+                  ))}
+                  {data?.clusters.filter((c) => c.id !== contextMenu.node.cluster_id).length === 0 && (
+                    <div className="px-3 py-1.5 text-xs text-text-tertiary">No other clusters</div>
+                  )}
+                </>
+              )}
+              {contextMenu.node.type === "cluster" && (
+                <>
+                  <button
+                    className="w-full flex items-center gap-2 px-3 py-2 text-sm text-text-primary hover:bg-bg-dark cursor-pointer border-none bg-transparent text-left"
+                    onClick={() => {
+                      setRenameInput({
+                        clusterId: contextMenu.node.cluster_id,
+                        name: contextMenu.node.label || "",
+                      });
+                      setContextMenu(null);
+                    }}
+                  >
+                    ✏️ Rename Cluster
+                  </button>
+                  {contextMenu.node.file_count === 0 && (
+                    <button
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-error hover:bg-bg-dark cursor-pointer border-none bg-transparent text-left"
+                      onClick={() => {
+                        if (onDeleteCluster) onDeleteCluster(contextMenu.node.cluster_id);
+                        setContextMenu(null);
+                      }}
+                    >
+                      🗑️ Delete Cluster
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
+          {/* Rename dialog */}
+          {renameInput && (
+            <>
+              <div
+                className="fixed inset-0 z-[199]"
+                style={{ background: "rgba(0,0,0,0.3)" }}
+                onClick={() => setRenameInput(null)}
+              />
+              <div
+                className="fixed z-[200] left-1/2 top-1/3 -translate-x-1/2 -translate-y-1/2 w-80 p-4 rounded-xl shadow-xl"
+                style={{
+                  background: "var(--bg-card)",
+                  border: "1px solid var(--bg-border)",
+                }}
+              >
+                <div className="text-sm font-semibold text-text-primary mb-3">Rename Cluster</div>
+                <input
+                  autoFocus
+                  className="w-full h-9 px-3 rounded-lg text-sm bg-bg-dark text-text-primary border border-bg-border outline-none focus:border-accent"
+                  value={renameInput.name}
+                  onChange={(e) => setRenameInput({ ...renameInput, name: e.target.value })}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && renameInput.name.trim()) {
+                      if (onRenameCluster) onRenameCluster(renameInput.clusterId, renameInput.name.trim());
+                      setRenameInput(null);
+                    }
+                    if (e.key === "Escape") setRenameInput(null);
+                  }}
+                />
+                <div className="flex justify-end gap-2 mt-3">
+                  <button
+                    className="px-3 py-1.5 text-sm rounded-lg bg-bg-dark text-text-secondary hover:text-text-primary cursor-pointer border-none"
+                    onClick={() => setRenameInput(null)}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    className="px-3 py-1.5 text-sm rounded-lg bg-accent text-white cursor-pointer border-none hover:bg-accent-hover"
+                    onClick={() => {
+                      if (renameInput.name.trim() && onRenameCluster) {
+                        onRenameCluster(renameInput.clusterId, renameInput.name.trim());
+                      }
+                      setRenameInput(null);
+                    }}
+                  >
+                    Rename
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
         </>
       )}
       {(!data || graphData.nodes.length === 0) && (

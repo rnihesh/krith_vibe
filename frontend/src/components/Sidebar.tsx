@@ -1,37 +1,75 @@
 import { motion, AnimatePresence } from "framer-motion";
-import { X, ExternalLink, FileText, Tag, Clock, Link2 } from "lucide-react";
-import { GraphNode, SEFSFile, getClusterColor, getFileIcon } from "../types";
-import { openFile, getRelatedFiles, RelatedFile } from "../api";
+import { X, ExternalLink, FileText, Tag, Clock, Link2, Pin, PinOff, ArrowRightLeft } from "lucide-react";
+import { GraphNode, SEFSFile, ClusterInfo, getClusterColor, getFileIcon } from "../types";
+import { openFile, getRelatedFiles, RelatedFile, pinFile, unpinFile, moveFileToCluster } from "../api";
 import { useState, useEffect } from "react";
 
 interface Props {
   selectedNode: GraphNode | null;
   onClose: () => void;
   onSelectNode?: (node: GraphNode) => void;
+  clusters?: ClusterInfo[];
+  onDataChange?: () => void;
 }
 
 function isFile(node: GraphNode): node is SEFSFile {
   return node.type === "file";
 }
 
-export function Sidebar({ selectedNode, onClose, onSelectNode }: Props) {
+export function Sidebar({ selectedNode, onClose, onSelectNode, clusters, onDataChange }: Props) {
   const [opening, setOpening] = useState(false);
   const [openError, setOpenError] = useState<string | null>(null);
   const [related, setRelated] = useState<RelatedFile[]>([]);
   const [loadingRelated, setLoadingRelated] = useState(false);
+  const [isPinned, setIsPinned] = useState(false);
+  const [moveOpen, setMoveOpen] = useState(false);
+  const [moving, setMoving] = useState(false);
 
   // Fetch related files when a file node is selected
   useEffect(() => {
     if (selectedNode && isFile(selectedNode) && selectedNode.file_id) {
       setLoadingRelated(true);
+      setIsPinned(!!selectedNode.pinned);
+      setMoveOpen(false);
       getRelatedFiles(selectedNode.file_id, 5)
         .then(setRelated)
         .catch(() => setRelated([]))
         .finally(() => setLoadingRelated(false));
     } else {
       setRelated([]);
+      setMoveOpen(false);
     }
   }, [selectedNode]);
+
+  const handleTogglePin = async () => {
+    if (!selectedNode || !isFile(selectedNode)) return;
+    try {
+      if (isPinned) {
+        await unpinFile(selectedNode.file_id);
+        setIsPinned(false);
+      } else {
+        await pinFile(selectedNode.file_id);
+        setIsPinned(true);
+      }
+      onDataChange?.();
+    } catch (e) {
+      // silent
+    }
+  };
+
+  const handleMoveToCluster = async (clusterId: number) => {
+    if (!selectedNode || !isFile(selectedNode)) return;
+    setMoving(true);
+    try {
+      await moveFileToCluster(selectedNode.file_id, clusterId);
+      setMoveOpen(false);
+      onDataChange?.();
+    } catch (e) {
+      // silent
+    } finally {
+      setMoving(false);
+    }
+  };
 
   const handleOpen = async () => {
     if (!selectedNode || !isFile(selectedNode)) return;
@@ -119,6 +157,59 @@ export function Sidebar({ selectedNode, onClose, onSelectNode }: Props) {
                 >
                   Cluster {selectedNode.cluster_id}
                 </span>
+              </div>
+            )}
+
+            {/* Pin status + Move to cluster (file nodes only) */}
+            {isFile(selectedNode) && (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleTogglePin}
+                  className={`flex items-center gap-1.5 text-xs px-2 py-1 rounded-lg cursor-pointer border-none transition-colors ${
+                    isPinned
+                      ? "bg-amber-500/15 text-amber-600"
+                      : "bg-bg-dark text-text-tertiary hover:text-text-secondary"
+                  }`}
+                  title={isPinned ? "Unpin — allow auto-recluster to move this file" : "Pin — prevent auto-recluster from moving this file"}
+                >
+                  {isPinned ? <Pin size={12} /> : <PinOff size={12} />}
+                  {isPinned ? "Pinned" : "Pin"}
+                </button>
+                <button
+                  onClick={() => setMoveOpen(!moveOpen)}
+                  className="flex items-center gap-1.5 text-xs px-2 py-1 rounded-lg bg-bg-dark text-text-tertiary hover:text-text-secondary cursor-pointer border-none transition-colors"
+                  title="Move to different cluster"
+                >
+                  <ArrowRightLeft size={12} />
+                  Move
+                </button>
+              </div>
+            )}
+
+            {/* Move-to-cluster dropdown */}
+            {isFile(selectedNode) && moveOpen && clusters && (
+              <div className="bg-bg-dark rounded-lg p-1">
+                <div className="text-[10px] text-text-tertiary font-semibold uppercase tracking-wider px-2 py-1">
+                  Move to cluster
+                </div>
+                {clusters.filter((c) => c.id !== selectedNode.cluster_id).map((c) => (
+                  <button
+                    key={c.id}
+                    disabled={moving}
+                    className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-xs text-text-primary hover:bg-bg-card cursor-pointer border-none bg-transparent text-left disabled:opacity-50"
+                    onClick={() => handleMoveToCluster(c.id)}
+                  >
+                    <div
+                      className="w-2 h-2 rounded-full shrink-0"
+                      style={{ background: getClusterColor(c.id) }}
+                    />
+                    <span className="truncate">{c.name}</span>
+                    <span className="text-text-tertiary ml-auto">({c.file_count})</span>
+                  </button>
+                ))}
+                {clusters.filter((c) => c.id !== selectedNode.cluster_id).length === 0 && (
+                  <div className="px-2 py-1.5 text-xs text-text-tertiary">No other clusters</div>
+                )}
               </div>
             )}
 

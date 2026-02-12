@@ -22,6 +22,7 @@ from app import db, pipeline, extractor, embedder
 from app.watcher import watcher
 from app.embedder import get_embedding
 from app import settings as settings_module
+from app import sync as sync_module
 from app.chat import chat_stream
 from app.metrics import metrics as pipeline_metrics
 
@@ -366,6 +367,196 @@ async def get_clusters():
     return [c.to_dict() for c in clusters]
 
 
+@app.post("/api/clusters")
+async def create_cluster(request: Request):
+    """Create a new manual cluster with a folder on disk."""
+    body = await request.json()
+    name = body.get("name", "").strip()
+    description = body.get("description", "").strip()
+    if not name:
+        raise HTTPException(400, "Cluster name is required")
+
+    # Check for duplicate name
+    existing = await db.get_all_clusters()
+    for c in existing:
+        if c.name.lower() == name.lower():
+            raise HTTPException(409, f"Cluster '{name}' already exists")
+
+    # Create folder on disk
+    folder_path = sync_module.create_cluster_folder(settings.root_path, name)
+
+    # Get next available ID
+    cluster_id = await db.get_next_cluster_id()
+
+    now = __import__("datetime").datetime.utcnow().isoformat()
+    record = db.ClusterRecord(
+        id=cluster_id,
+        name=name,
+        description=description or f"Manually created cluster",
+        folder_path=str(folder_path),
+        centroid=None,
+        file_count=0,
+        is_manual=1,
+        created_at=now,
+    )
+    await db.upsert_cluster(record)
+    await db.add_event(0, "cluster_created", f"Created cluster: {name}")
+    await manager.broadcast({
+        "type": "cluster_created",
+        "cluster_id": cluster_id,
+        "name": name,
+        "timestamp": now,
+    })
+    return record.to_dict()
+
+
+@app.put("/api/clusters/{cluster_id}")
+async def update_cluster(cluster_id: int, request: Request):
+    """Rename a cluster and its folder on disk."""
+    body = await request.json()
+    new_name = body.get("name", "").strip()
+    if not new_name:
+        raise HTTPException(400, "Cluster name is required")
+
+    cluster = await db.get_cluster_by_id(cluster_id)
+    if not cluster:
+        raise HTTPException(404, "Cluster not found")
+
+    # Check for duplicate name
+    existing = await db.get_all_clusters()
+    for c in existing:
+        if c.id != cluster_id and c.name.lower() == new_name.lower():
+            raise HTTPException(409, f"Cluster '{new_name}' already exists")
+
+    # Rename folder on disk (uses sync_lock internally to suppress watcher)
+    old_path = Path(cluster.folder_path) if cluster.folder_path else settings.root_path / cluster.name
+    sync_module.set_sync_lock(True)
+    try:
+        new_path = sync_module.rename_cluster_folder(old_path, new_name)
+
+        # Update file paths — use actual on-disk basename (handles collision-renamed files)
+        all_files = await db.get_all_files()
+        for f in all_files:
+            if f.cluster_id == cluster_id:
+                # Use basename from current_path (actual name on disk)
+                on_disk_name = Path(f.current_path).name if f.current_path else f.filename
+                new_file_path = str(new_path / on_disk_name)
+                await db.update_file_current_path(f.id, new_file_path)
+    finally:
+        await asyncio.sleep(1.0)
+        sync_module.set_sync_lock(False)
+
+    await db.rename_cluster(cluster_id, new_name, str(new_path))
+    await db.add_event(0, "cluster_renamed", f"Renamed to: {new_name}")
+    await manager.broadcast({
+        "type": "cluster_updated",
+        "cluster_id": cluster_id,
+        "name": new_name,
+        "timestamp": __import__("datetime").datetime.utcnow().isoformat(),
+    })
+    updated = await db.get_cluster_by_id(cluster_id)
+    return updated.to_dict() if updated else {}
+
+
+@app.delete("/api/clusters/{cluster_id}")
+async def delete_cluster(cluster_id: int):
+    """Delete a cluster (must be empty)."""
+    cluster = await db.get_cluster_by_id(cluster_id)
+    if not cluster:
+        raise HTTPException(404, "Cluster not found")
+
+    file_count = await db.count_files_in_cluster(cluster_id)
+    if file_count > 0:
+        raise HTTPException(400, f"Cannot delete cluster with {file_count} files. Move files first.")
+
+    # Delete folder on disk
+    if cluster.folder_path:
+        sync_module.delete_cluster_folder(Path(cluster.folder_path))
+
+    await db.delete_cluster(cluster_id)
+    await db.add_event(0, "cluster_deleted", f"Deleted cluster: {cluster.name}")
+    await manager.broadcast({
+        "type": "cluster_deleted",
+        "cluster_id": cluster_id,
+        "name": cluster.name,
+        "timestamp": __import__("datetime").datetime.utcnow().isoformat(),
+    })
+    return {"message": f"Deleted cluster '{cluster.name}'"}
+
+
+@app.put("/api/files/{file_id}/cluster")
+async def move_file_to_cluster(file_id: int, request: Request):
+    """Move a file to a different cluster (updates DB + moves on disk)."""
+    body = await request.json()
+    target_cluster_id = body.get("cluster_id")
+    if target_cluster_id is None:
+        raise HTTPException(400, "cluster_id is required")
+
+    f = await db.get_file_by_id(file_id)
+    if not f:
+        raise HTTPException(404, "File not found")
+
+    target_cluster = await db.get_cluster_by_id(target_cluster_id)
+    if not target_cluster:
+        raise HTTPException(404, "Target cluster not found")
+
+    old_cluster_id = f.cluster_id
+
+    # Move file on disk
+    source_path = Path(f.current_path) if f.current_path else Path(f.original_path)
+    if not source_path.exists():
+        raise HTTPException(404, "File not found on disk")
+
+    target_folder = Path(target_cluster.folder_path) if target_cluster.folder_path else settings.root_path / target_cluster.name
+    final_path = await sync_module.move_single_file(source_path, target_folder, f.filename)
+
+    # Update DB
+    await db.update_file_cluster(file_id, target_cluster_id)
+    await db.update_file_current_path(file_id, str(final_path))
+    await db.update_file_filename(file_id, final_path.name)
+    await db.pin_file(file_id)
+
+    # Update file counts on both clusters
+    old_count = await db.count_files_in_cluster(old_cluster_id)
+    new_count = await db.count_files_in_cluster(target_cluster_id)
+    await db.update_cluster_file_count(old_cluster_id, old_count)
+    await db.update_cluster_file_count(target_cluster_id, new_count)
+
+    now = __import__("datetime").datetime.utcnow().isoformat()
+    await db.add_event(file_id, "file_moved", f"Moved to cluster: {target_cluster.name}")
+    await manager.broadcast({
+        "type": "file_moved",
+        "file_id": file_id,
+        "filename": f.filename,
+        "from_cluster": old_cluster_id,
+        "to_cluster": target_cluster_id,
+        "timestamp": now,
+    })
+
+    updated = await db.get_file_by_id(file_id)
+    return updated.to_dict() if updated else {}
+
+
+@app.put("/api/files/{file_id}/pin")
+async def pin_file_endpoint(file_id: int):
+    """Pin a file so auto-recluster won't move it."""
+    f = await db.get_file_by_id(file_id)
+    if not f:
+        raise HTTPException(404, "File not found")
+    await db.pin_file(file_id)
+    return {"message": f"Pinned {f.filename}", "pinned": 1}
+
+
+@app.put("/api/files/{file_id}/unpin")
+async def unpin_file_endpoint(file_id: int):
+    """Unpin a file so auto-recluster can move it."""
+    f = await db.get_file_by_id(file_id)
+    if not f:
+        raise HTTPException(404, "File not found")
+    await db.unpin_file(file_id)
+    return {"message": f"Unpinned {f.filename}", "pinned": 0}
+
+
 @app.get("/api/events")
 async def get_events(limit: int = 50):
     limit = max(1, min(limit, 200))
@@ -475,6 +666,7 @@ async def get_graph():
                 "page_count": f.page_count,
                 "summary": f.summary,
                 "current_path": f.current_path,
+                "pinned": f.pinned,
                 "type": "file",
             }
         )
@@ -488,6 +680,7 @@ async def get_graph():
             "label": c.name,
             "file_count": c.file_count,
             "description": c.description,
+            "is_manual": c.is_manual,
             "type": "cluster",
             "x": 0,
             "y": 0,

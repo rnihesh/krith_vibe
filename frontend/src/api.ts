@@ -1,5 +1,5 @@
 /* ─── API client for SEFS backend ─── */
-import { GraphData, StatusInfo, EventLog } from "./types";
+import { GraphData, StatusInfo, EventLog, ClusterInfo } from "./types";
 
 declare global {
   interface Window {
@@ -228,4 +228,87 @@ export interface MetricsSummary {
 
 export async function getMetrics(): Promise<MetricsSummary> {
   return fetchJSON("/api/metrics");
+}
+
+// ─── Human Review API ────────────────────────────────────────
+
+export async function createCluster(
+  name: string,
+  description?: string,
+): Promise<ClusterInfo> {
+  const res = await fetch(`${API_BASE}/api/clusters`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, description }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `Create cluster failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function renameCluster(
+  clusterId: number,
+  name: string,
+): Promise<ClusterInfo> {
+  const res = await fetch(`${API_BASE}/api/clusters/${clusterId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `Rename cluster failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function deleteCluster(
+  clusterId: number,
+): Promise<{ message: string }> {
+  const res = await fetch(`${API_BASE}/api/clusters/${clusterId}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `Delete cluster failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function moveFileToCluster(
+  fileId: number,
+  clusterId: number,
+): Promise<Record<string, any>> {
+  const res = await fetch(`${API_BASE}/api/files/${fileId}/cluster`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ cluster_id: clusterId }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || `Move file failed: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function pinFile(
+  fileId: number,
+): Promise<{ message: string; pinned: number }> {
+  const res = await fetch(`${API_BASE}/api/files/${fileId}/pin`, {
+    method: "PUT",
+  });
+  if (!res.ok) throw new Error(`Pin file failed: ${res.statusText}`);
+  return res.json();
+}
+
+export async function unpinFile(
+  fileId: number,
+): Promise<{ message: string; pinned: number }> {
+  const res = await fetch(`${API_BASE}/api/files/${fileId}/unpin`, {
+    method: "PUT",
+  });
+  if (!res.ok) throw new Error(`Unpin file failed: ${res.statusText}`);
+  return res.json();
 }

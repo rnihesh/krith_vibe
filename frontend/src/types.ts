@@ -15,6 +15,7 @@ export interface SEFSFile {
   summary: string;
   current_path: string;
   key_topics?: string[];
+  pinned?: number;
   type: "file";
 }
 
@@ -24,6 +25,7 @@ export interface SEFSCluster {
   label: string;
   file_count: number;
   description: string;
+  is_manual?: number;
   type: "cluster";
   x: number;
   y: number;
@@ -50,6 +52,7 @@ export interface ClusterInfo {
   description: string;
   folder_path: string;
   file_count: number;
+  is_manual?: number;
   created_at: string;
 }
 

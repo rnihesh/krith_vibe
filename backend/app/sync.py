@@ -172,3 +172,76 @@ def _cleanup_empty_dirs(root: Path, keep_names: set[str]):
                     logger.info(f"Removed empty directory: {d.name}")
             except Exception:
                 pass
+
+
+# ─── Single-file move (human review) ──────────────────────────
+
+
+async def move_single_file(
+    source_path: Path,
+    target_folder: Path,
+    filename: str,
+) -> Path:
+    """
+    Move a single file to a target cluster folder.
+    Uses sync lock to prevent watcher re-triggering.
+    Returns the final target path (handles name collisions).
+    """
+    target_folder.mkdir(parents=True, exist_ok=True)
+    target_path = target_folder / filename
+
+    if source_path.resolve() == target_path.resolve():
+        return target_path
+
+    # Handle name collisions
+    if target_path.exists():
+        stem = target_path.stem
+        suffix = target_path.suffix
+        counter = 1
+        while target_path.exists():
+            target_path = target_folder / f"{stem}_{counter}{suffix}"
+            counter += 1
+
+    set_sync_lock(True)
+    try:
+        _add_synced_paths(str(source_path), str(target_path))
+        shutil.move(str(source_path), str(target_path))
+        logger.info(f"Manual move: {source_path.name} → {target_folder.name}/")
+    finally:
+        await asyncio.sleep(1.0)
+        set_sync_lock(False)
+
+    return target_path
+
+
+def create_cluster_folder(root: Path, cluster_name: str) -> Path:
+    """Create a cluster folder on disk. Returns the absolute path."""
+    folder = root / cluster_name
+    folder.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Created cluster folder: {cluster_name}")
+    return folder
+
+
+def rename_cluster_folder(old_path: Path, new_name: str) -> Path:
+    """Rename a cluster folder on disk. Returns the new absolute path."""
+    new_path = old_path.parent / new_name
+    if old_path.exists() and old_path != new_path:
+        old_path.rename(new_path)
+        logger.info(f"Renamed cluster folder: {old_path.name} → {new_name}")
+    elif not old_path.exists():
+        new_path.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Created cluster folder (old missing): {new_name}")
+    return new_path
+
+
+def delete_cluster_folder(folder_path: Path):
+    """Delete an empty cluster folder from disk."""
+    if folder_path.exists() and folder_path.is_dir():
+        try:
+            if not any(folder_path.iterdir()):
+                folder_path.rmdir()
+                logger.info(f"Deleted empty cluster folder: {folder_path.name}")
+            else:
+                logger.warning(f"Cannot delete non-empty folder: {folder_path.name}")
+        except Exception as e:
+            logger.error(f"Failed to delete folder {folder_path}: {e}")
