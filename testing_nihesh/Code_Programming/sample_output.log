@@ -1,7 +1,7 @@
 2026-02-12 08:00:01 [INFO] sefs.main: Starting SEFS backend on port 8484
 2026-02-12 08:00:02 [INFO] sefs.db: Database initialized at ./sefs.db
-2026-02-12 08:00:02 [INFO] sefs.watcher: Watching /Users/nihesh/sefs_root
-2026-02-12 08:00:03 [INFO] sefs.pipeline: Full scan of /Users/nihesh/sefs_root
+2026-02-12 08:00:02 [INFO] sefs.watcher: Watching /Users/sefs_root
+2026-02-12 08:00:03 [INFO] sefs.pipeline: Full scan of /Users/sefs_root
 2026-02-12 08:00:03 [INFO] sefs.pipeline: Found 15 supported files to process
 2026-02-12 08:00:04 [INFO] sefs.pipeline: Processing file: report.pdf
 2026-02-12 08:00:05 [INFO] sefs.embedder: Generated embedding (768d) in 423ms

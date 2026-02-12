@@ -412,7 +412,7 @@ cd backend && pytest
 
 ```bash
 # Root folder to monitor
-ROOT_FOLDER=~/Nihesh/sefs_root
+ROOT_FOLDER=~/sefs_root
 
 # Ollama settings
 OLLAMA_HOST=http://localhost:11434
@@ -604,7 +604,7 @@ pytest -v
 1. Start backend: `python -m uvicorn app.main:app --reload`
 2. Drop files into root folder
 3. Check logs for processing events
-4. Verify clusters created: `ls ~/Nihesh/sefs_root`
+4. Verify clusters created: `ls ~/sefs_root`
 5. Check database: `sqlite3 backend/sefs.db "SELECT * FROM clusters"`
 
 **Frontend:**

@@ -52,7 +52,7 @@ cd krith_vibe
 chmod +x start.sh
 ./start.sh
 
-# 3. Drop files into ~/Nihesh/sefs_root and watch the magic!
+# 3. Drop files into ~/sefs_root and watch the magic!
 ```
 
 ## Manual Setup
@@ -82,7 +82,7 @@ Edit `backend/.env`:
 
 | Variable             | Default                   | Description       |
 | -------------------- | ------------------------- | ----------------- |
-| `ROOT_FOLDER`        | `~/Nihesh/sefs_root`      | Folder to monitor |
+| `ROOT_FOLDER`        | `~/sefs_root`      | Folder to monitor |
 | `OLLAMA_HOST`        | `http://localhost:11434`  | Ollama server     |
 | `OLLAMA_EMBED_MODEL` | `nomic-embed-text:latest` | Embedding model   |
 | `OLLAMA_LLM_MODEL`   | `llama3.2:latest`         | LLM for naming    |

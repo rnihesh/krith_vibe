@@ -128,7 +128,7 @@ Backend config via `backend/.env`:
 - `OLLAMA_EMBED_MODEL` — Embedding model (default: `nomic-embed-text`, 768-dim)
 - `OLLAMA_LLM_MODEL` — LLM for naming/summaries (default: `llama3.2`)
 - `OPENAI_API_KEY` — Fallback when Ollama unavailable
-- `ROOT_FOLDER` — Monitored directory (default: `~/Nihesh/sefs_root`)
+- `ROOT_FOLDER` — Monitored directory (default: `~/sefs_root`)
 - `HOST`/`PORT` — Server binding (default: `0.0.0.0:8484`)
 
 ## Important Thresholds (clusterer.py)

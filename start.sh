@@ -21,7 +21,7 @@ echo "  ╚═══════════════════════
 echo -e "${NC}"
 
 # ─── Setup root folder ───
-ROOT_FOLDER="${ROOT_FOLDER:-$HOME/Nihesh/sefs_root}"
+ROOT_FOLDER="${ROOT_FOLDER:-$HOME/sefs_root}"
 mkdir -p "$ROOT_FOLDER"
 echo -e "${CYAN}📁 Root folder: ${ROOT_FOLDER}${NC}"
 
