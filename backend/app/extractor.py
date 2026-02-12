@@ -1,5 +1,6 @@
 """
-SEFS Content Extractor — unified text extraction for PDF, TXT, MD, DOCX, CSV.
+SEFS Content Extractor — unified text extraction for PDF, TXT, MD, DOCX, CSV,
+and all common source-code / config / markup file types.
 """
 
 from __future__ import annotations
@@ -10,7 +11,8 @@ from dataclasses import dataclass
 
 logger = logging.getLogger("sefs.extractor")
 
-SUPPORTED_EXTENSIONS = {
+# ── Rich-format document types (each has a dedicated extractor) ──
+_DOCUMENT_EXTENSIONS = {
     ".pdf",
     ".txt",
     ".md",
@@ -20,6 +22,169 @@ SUPPORTED_EXTENSIONS = {
     ".text",
     ".rst",
 }
+
+# ── Plain-text / source-code / config types (read as raw text via chardet) ──
+_CODE_EXTENSIONS = {
+    # Programming languages
+    ".py",
+    ".pyi",
+    ".pyw",
+    ".js",
+    ".mjs",
+    ".cjs",
+    ".jsx",
+    ".ts",
+    ".mts",
+    ".cts",
+    ".tsx",
+    ".swift",
+    ".java",
+    ".kt",
+    ".kts",
+    ".c",
+    ".h",
+    ".cpp",
+    ".cc",
+    ".cxx",
+    ".hpp",
+    ".hxx",
+    ".hh",
+    ".cs",
+    ".go",
+    ".rs",
+    ".rb",
+    ".erb",
+    ".php",
+    ".scala",
+    ".sbt",
+    ".r",
+    ".R",
+    ".m",  # Objective-C
+    ".lua",
+    ".pl",
+    ".pm",  # Perl
+    ".dart",
+    ".zig",
+    ".v",  # Verilog / Vlang
+    ".nim",
+    ".ex",
+    ".exs",  # Elixir
+    ".clj",
+    ".cljs",
+    ".cljc",
+    ".edn",  # Clojure
+    ".hs",
+    ".lhs",  # Haskell
+    ".erl",
+    ".hrl",  # Erlang
+    ".fs",
+    ".fsx",
+    ".fsi",  # F#
+    ".ml",
+    ".mli",  # OCaml
+    ".jl",  # Julia
+    ".groovy",
+    ".gradle",
+    ".pas",
+    ".pp",  # Pascal
+    ".vb",
+    ".vbs",  # Visual Basic
+    ".d",  # D lang
+    ".f90",
+    ".f95",
+    ".f03",  # Fortran
+    ".lisp",
+    ".cl",
+    ".el",  # Lisp / Emacs Lisp
+    ".rkt",  # Racket
+    ".tcl",
+    ".awk",
+    ".coffee",
+    ".vue",
+    ".svelte",  # Frontend frameworks
+    # Web / Markup
+    ".html",
+    ".htm",
+    ".xhtml",
+    ".css",
+    ".scss",
+    ".sass",
+    ".less",
+    ".xml",
+    ".xsl",
+    ".xsd",
+    ".svg",
+    # Data / Config
+    ".json",
+    ".jsonc",
+    ".json5",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".ini",
+    ".cfg",
+    ".env",
+    ".env.example",
+    ".properties",
+    ".plist",
+    ".editorconfig",
+    # Shell / Script
+    ".sh",
+    ".bash",
+    ".zsh",
+    ".fish",
+    ".ps1",
+    ".psm1",
+    ".bat",
+    ".cmd",
+    # Docs / Other text
+    ".sql",
+    ".graphql",
+    ".gql",
+    ".proto",
+    ".tex",
+    ".bib",
+    ".log",
+    ".org",
+    ".adoc",
+    ".asciidoc",
+    ".diff",
+    ".patch",
+    ".cmake",
+    ".makefile",
+    # Build / Project files
+    ".dockerfile",
+    ".tf",
+    ".tfvars",  # Terraform
+    ".hcl",  # HashiCorp
+    ".prisma",
+    ".sol",  # Solidity
+    ".move",
+    ".wgsl",
+    ".glsl",
+    ".hlsl",  # Shader languages
+}
+
+# Files whose *name* (case-insensitive) is plain-text even without an extension
+_PLAIN_TEXT_NAMES = {
+    "makefile",
+    "dockerfile",
+    "vagrantfile",
+    "gemfile",
+    "rakefile",
+    "procfile",
+    "justfile",
+    "cmakelists.txt",
+    ".gitignore",
+    ".gitattributes",
+    ".dockerignore",
+    ".editorconfig",
+    ".eslintrc",
+    ".prettierrc",
+    ".babelrc",
+}
+
+SUPPORTED_EXTENSIONS = _DOCUMENT_EXTENSIONS | _CODE_EXTENSIONS
 
 
 @dataclass
@@ -33,7 +198,13 @@ class ExtractionResult:
 
 
 def is_supported(path: Path) -> bool:
-    return path.suffix.lower() in SUPPORTED_EXTENSIONS and not path.name.startswith(".")
+    if path.name.startswith("."):
+        # Still allow known dotfile names like .gitignore
+        return path.name.lower() in _PLAIN_TEXT_NAMES
+    if path.suffix.lower() in SUPPORTED_EXTENSIONS:
+        return True
+    # Extensionless files with known names (Makefile, Dockerfile, etc.)
+    return path.name.lower() in _PLAIN_TEXT_NAMES
 
 
 def compute_hash(path: Path) -> str:
@@ -62,6 +233,10 @@ def extract(path: Path) -> ExtractionResult:
         text, pages = _extract_docx(path)
     elif suffix == ".csv":
         text = _extract_csv(path)
+        pages = 1
+    elif suffix in _CODE_EXTENSIONS or path.name.lower() in _PLAIN_TEXT_NAMES:
+        # All source code, config, and known extensionless files → read as text
+        text = _extract_text(path)
         pages = 1
     else:
         text = ""

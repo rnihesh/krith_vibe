@@ -518,22 +518,51 @@ async def run_clustering():
     )
 
 
+# Semaphore limits concurrent file processing (protects Ollama/OpenAI from overload)
+_SCAN_CONCURRENCY = 5
+
+
 async def full_scan():
-    """Scan the root folder and process all supported files."""
+    """Scan the root folder and process all supported files (batched)."""
     root = settings.root_path
     root.mkdir(parents=True, exist_ok=True)
 
     logger.info(f"Full scan of {root}")
     await broadcast({"type": "scan_start", "root": str(root)})
 
-    count = 0
-    for path in root.rglob("*"):
-        if path.is_file() and extractor.is_supported(path):
-            result = await process_file(path)
-            if result:
-                count += 1
+    # Collect eligible paths first
+    paths = [p for p in root.rglob("*") if p.is_file() and extractor.is_supported(p)]
+    logger.info(f"Found {len(paths)} supported files to process")
 
-    logger.info(f"Scan complete: {count} files processed")
+    if not paths:
+        await broadcast({"type": "scan_complete", "file_count": 0})
+        return 0
+
+    # Process in parallel with a semaphore to bound concurrency
+    sem = asyncio.Semaphore(_SCAN_CONCURRENCY)
+
+    async def _process_bounded(p: Path):
+        async with sem:
+            return await process_file(p)
+
+    results = await asyncio.gather(
+        *[_process_bounded(p) for p in paths],
+        return_exceptions=True,
+    )
+
+    count = 0
+    errors = 0
+    for i, result in enumerate(results):
+        if isinstance(result, BaseException):
+            logger.error(f"Error processing {paths[i].name}: {result}")
+            errors += 1
+        elif result is not None:
+            count += 1
+
+    logger.info(
+        f"Scan complete: {count} files processed, {errors} errors, "
+        f"{len(paths) - count - errors} skipped"
+    )
 
     if count > 0:
         await run_clustering()
